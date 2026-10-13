@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Test checkout — Recall</title>
+<style>
+  :root{--bg:#0b1020;--card:#141a30;--line:#262e52;--txt:#eef1ff;--mut:#98a0c0;--a1:#5b5bd6;--a2:#a78bfa}
+  *{box-sizing:border-box}
+  body{margin:0;min-height:100dvh;display:grid;place-items:center;background:var(--bg);color:var(--txt);
+       font:16px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;padding:24px}
+  .box{max-width:360px;width:100%;text-align:center;background:var(--card);border:1px solid var(--line);
+       border-radius:18px;padding:26px 22px}
+  h1{margin:0 0 6px;font-size:19px;letter-spacing:-.02em}
+  .amt{font-size:30px;font-weight:800;letter-spacing:-.03em;margin:6px 0 2px}
+  p{color:var(--mut);font-size:13.5px;margin:0 0 6px}
+  .ord{font-size:11.5px;color:var(--mut);opacity:.7;word-break:break-all;margin-bottom:18px}
+  button{width:100%;padding:16px;border:0;border-radius:14px;font:inherit;font-size:16px;font-weight:700;
+         color:#fff;background:linear-gradient(135deg,var(--a1),var(--a2));cursor:pointer;touch-action:manipulation}
+  button:active{transform:scale(.98)}
+  .back{display:inline-block;margin-top:14px;color:var(--mut);font-size:13px;text-decoration:none}
+</style>
+</head>
+<body>
+  <div class="box">
+    <h1>Test checkout</h1>
+    <div class="amt">{{SYMBOL}}{{AMOUNT}}</div>
+    <p>No real payment is taken — this stands in for the card provider while testing.</p>
+    <div class="ord">order {{ORDER}}</div>
+    <form method="POST" action="/api/webhook/mock">
+      <input type="hidden" name="order_id" value="{{ORDER}}">
+      <input type="hidden" name="status" value="paid">
+      <input type="hidden" name="sign" value="{{SIGN}}">
+      <button type="submit">Pay {{SYMBOL}}{{AMOUNT}}</button>
+    </form>
+    <a class="back" href="/">cancel and go back</a>
+  </div>
+</body>
+</html>

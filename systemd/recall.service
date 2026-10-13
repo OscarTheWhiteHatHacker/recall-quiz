@@ -1,0 +1,19 @@
+[Unit]
+Description=Recall — paste text, get a graded quiz
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/recall
+ExecStart=/usr/bin/python3 /opt/recall/server.py
+Restart=always
+RestartSec=3
+# settings come from the wizard's config.env; uncomment to use a systemd env file instead
+# EnvironmentFile=/etc/recall.env
+User=recall
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

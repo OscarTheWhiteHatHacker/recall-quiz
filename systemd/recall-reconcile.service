@@ -1,0 +1,8 @@
+[Unit]
+Description=Recall — settle paid-but-uncredited purchases (webhook backstop)
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/recall
+ExecStart=/usr/bin/python3 /opt/recall/reconcile.py
+User=recall

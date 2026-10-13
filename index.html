@@ -1,0 +1,826 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b1020">
+<meta name="description" content="Paste a textbook, get a quiz graded instantly by Jev.">
+<title>Recall — AI quiz generator</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='9' fill='%235b5bd6'/%3E%3Ctext x='16' y='23' font-family='system-ui' font-size='20' font-weight='800' fill='%23fff' text-anchor='middle'%3ER%3C/text%3E%3C/svg%3E">
+<style>
+:root{
+  --bg:#f5f6fb; --surface:#ffffff; --surface2:#eef0f8; --text:#141a2e; --muted:#5d6480;
+  --line:#e2e5f0; --accent:#5b5bd6; --accent2:#7c5cff; --ok:#16a34a; --bad:#e5484d;
+  --shadow:0 10px 30px rgba(20,26,46,.10); --r:18px;
+  --safe:env(safe-area-inset-bottom,0px);
+}
+@media (prefers-color-scheme:dark){
+  :root{
+    --bg:#0b1020; --surface:#141a30; --surface2:#1b2240; --text:#eef1ff; --muted:#98a0c0;
+    --line:#262e52; --accent:#7b7bff; --accent2:#a78bfa; --ok:#3ddc84; --bad:#ff6b6b;
+    --shadow:0 12px 34px rgba(0,0,0,.45);
+  }
+  html{color-scheme:dark}
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{
+  background:var(--bg); color:var(--text);
+  font:16px/1.55 system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  -webkit-text-size-adjust:100%; min-height:100dvh;
+  overscroll-behavior-y:none;
+}
+button,input,textarea,select{font:inherit;color:inherit}
+button{touch-action:manipulation;-webkit-tap-highlight-color:transparent;cursor:pointer}
+.app{max-width:640px;margin:0 auto;padding:16px 16px calc(24px + var(--safe));}
+
+/* header */
+header{display:flex;align-items:center;gap:10px;padding:6px 2px 14px}
+.logo{width:34px;height:34px;border-radius:11px;flex:0 0 auto;
+  background:linear-gradient(135deg,var(--accent),var(--accent2));
+  display:grid;place-items:center;color:#fff;font-weight:800;font-size:17px;
+  box-shadow:0 6px 16px rgba(91,91,214,.35)}
+.brand{font-weight:750;letter-spacing:-.02em;font-size:18px}
+.brand small{display:block;font-weight:500;font-size:11.5px;color:var(--muted);letter-spacing:.01em}
+.balance{margin-left:auto;display:flex;align-items:center;gap:6px;border:1px solid var(--line);
+  background:var(--surface);color:var(--text);font-size:13.5px;font-weight:700;
+  padding:9px 13px;border-radius:999px;transition:transform .12s,border-color .16s;
+  font-variant-numeric:tabular-nums}
+.balance:active{transform:scale(.95)}
+.balance .plus{color:var(--accent);font-weight:800}
+.balance.low{border-color:var(--bad);color:var(--bad)}
+.balance.low .plus{color:var(--bad)}
+
+/* screens */
+.screen{display:none;animation:fadeUp .34s cubic-bezier(.22,.9,.3,1)}
+/* no fill-mode here on purpose: 'both' leaves an identity transform on the
+   screen, which would become the containing block for the fixed .cta */
+.screen.on{display:block}
+@keyframes fadeUp{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
+@media (prefers-reduced-motion:reduce){
+  *{animation-duration:.01ms !important;transition-duration:.01ms !important}
+}
+
+/* paste screen */
+h1{font-size:23px;line-height:1.25;margin:4px 0 4px;letter-spacing:-.02em}
+.sub{color:var(--muted);font-size:14.5px;margin:0 0 12px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);
+  box-shadow:var(--shadow);padding:16px}
+label.lbl{display:block;font-size:13px;font-weight:650;color:var(--muted);
+  text-transform:uppercase;letter-spacing:.06em;margin:0 0 8px}
+textarea#src{
+  width:100%;min-height:148px;max-height:42dvh;resize:vertical;
+  background:var(--surface2);border:1px solid var(--line);border-radius:14px;
+  padding:14px;font-size:16px;line-height:1.5;outline:none;
+  transition:border-color .18s,box-shadow .18s;
+}
+textarea#src:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(123,123,255,.22)}
+.meta{display:flex;justify-content:space-between;align-items:center;margin-top:8px;
+  font-size:12.5px;color:var(--muted)}
+.row{display:flex;gap:10px;flex-wrap:wrap;margin-top:16px}
+.chips{display:flex;gap:8px;flex-wrap:wrap}
+.chip{border:1px solid var(--line);background:var(--surface2);border-radius:999px;
+  padding:9px 15px;font-size:14px;font-weight:600;color:var(--muted);
+  transition:transform .12s,background .16s,color .16s,border-color .16s}
+.chip:active{transform:scale(.95)}
+.chip.sel{background:var(--accent);border-color:var(--accent);color:#fff}
+.seg{display:flex;background:var(--surface2);border:1px solid var(--line);
+  border-radius:14px;padding:4px;gap:4px;width:100%}
+.seg button{flex:1;border:0;background:transparent;border-radius:10px;padding:10px 6px;
+  font-size:14px;font-weight:650;color:var(--muted);transition:background .18s,color .18s,transform .12s}
+.seg button:active{transform:scale(.96)}
+.seg button.sel{background:var(--accent);color:#fff;
+  box-shadow:0 3px 10px rgba(91,91,214,.35)}
+.btn{border:0;border-radius:16px;padding:16px 20px;font-size:16.5px;font-weight:750;
+  width:100%;background:linear-gradient(135deg,var(--accent),var(--accent2));color:#fff;
+  box-shadow:0 10px 24px rgba(91,91,214,.35);transition:transform .12s,opacity .2s;
+  letter-spacing:.01em}
+.btn:active{transform:scale(.975)}
+.btn[disabled]{opacity:.45;box-shadow:none;pointer-events:none}
+.btn.ghost{background:var(--surface2);color:var(--text);box-shadow:none;
+  border:1px solid var(--line)}
+.btn.small{width:auto;padding:12px 18px;font-size:14.5px;border-radius:13px}
+.hint{font-size:12.5px;color:var(--muted);margin-top:8px;text-align:center}
+/* sticky CTA on the paste screen: the button is always reachable on a phone.
+   Opaque (not translucent) so content scrolling underneath reads as a bottom
+   bar instead of a mush, plus a short fade strip above it. */
+#s-paste{padding-bottom:150px}
+.cta{position:fixed;left:0;right:0;bottom:0;z-index:30;max-width:640px;margin:0 auto;
+  padding:12px 16px calc(12px + var(--safe));
+  background:var(--bg);
+  box-shadow:0 -10px 18px -10px rgba(10,14,30,.28);
+  pointer-events:none}
+.cta::before{content:'';position:absolute;left:0;right:0;top:-14px;height:14px;
+  background:linear-gradient(to top,var(--bg),transparent);pointer-events:none}
+.cta>*{pointer-events:auto}
+.linkbtn{background:none;border:0;color:var(--accent);font-weight:650;font-size:14px;
+  padding:14px 22px;min-height:46px;text-decoration:underline;text-underline-offset:3px}
+
+/* quiz */
+#prog{position:fixed;top:0;left:0;right:0;height:4px;background:transparent;z-index:40}
+#prog i{display:block;height:100%;width:0;border-radius:0 4px 4px 0;
+  background:linear-gradient(90deg,var(--accent),var(--accent2));
+  transition:width .45s cubic-bezier(.22,.9,.3,1)}
+.qhead{display:flex;justify-content:space-between;align-items:center;
+  font-size:13.5px;color:var(--muted);font-weight:650;margin:2px 2px 12px}
+.stack{position:relative}
+.qcard{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);
+  box-shadow:var(--shadow);padding:20px 18px;min-height:230px}
+.qcard.exit{position:absolute;top:0;left:0;right:0;pointer-events:none}
+.qtype{display:inline-block;font-size:11.5px;font-weight:750;letter-spacing:.08em;
+  text-transform:uppercase;color:var(--accent);background:rgba(123,123,255,.14);
+  padding:5px 10px;border-radius:8px;margin-bottom:12px}
+.qtext{font-size:19.5px;line-height:1.4;font-weight:700;letter-spacing:-.01em;margin:0 0 18px}
+.opts{display:flex;flex-direction:column;gap:10px}
+.opt{display:flex;gap:12px;align-items:flex-start;text-align:left;width:100%;
+  background:var(--surface2);border:1.5px solid var(--line);border-radius:14px;
+  padding:14px 14px;font-size:16px;line-height:1.45;
+  transition:transform .12s,border-color .16s,background .16s}
+.opt:active{transform:scale(.985)}
+.opt .k{flex:0 0 26px;height:26px;border-radius:50%;background:var(--surface);
+  border:1.5px solid var(--line);display:grid;place-items:center;font-size:13px;
+  font-weight:750;color:var(--muted);transition:all .16s}
+.opt.sel{border-color:var(--accent);background:rgba(123,123,255,.12)}
+.opt.sel .k{background:var(--accent);border-color:var(--accent);color:#fff}
+textarea#ans{width:100%;min-height:110px;resize:none;background:var(--surface2);
+  border:1.5px solid var(--line);border-radius:14px;padding:14px;font-size:16px;
+  line-height:1.5;outline:none;transition:border-color .18s,box-shadow .18s}
+textarea#ans:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(123,123,255,.22)}
+.dots{display:flex;gap:7px;flex-wrap:wrap;margin-top:18px;justify-content:center}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--line);transition:all .25s}
+.dot.now{background:var(--accent);transform:scale(1.35)}
+.dot.done{background:var(--ok)}
+.nav{display:flex;gap:10px;margin-top:16px}
+.nav .btn{flex:1}
+
+/* overlay */
+#ov{position:fixed;inset:0;background:rgba(6,9,20,.72);backdrop-filter:blur(7px);
+  z-index:60;display:none;place-items:center;padding:26px;text-align:center}
+#ov.on{display:grid;animation:fadeIn .2s ease both}
+@keyframes fadeIn{from{opacity:0}to{opacity:1}}
+.ring{width:74px;height:74px;margin:0 auto 20px;border-radius:50%;
+  border:5px solid rgba(255,255,255,.16);border-top-color:var(--accent2);
+  animation:spin .9s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+#ovMsg{color:#fff;font-size:17px;font-weight:650;min-height:26px;
+  transition:opacity .25s;letter-spacing:-.01em}
+#ovSub{color:rgba(255,255,255,.6);font-size:13.5px;margin-top:8px;
+  font-variant-numeric:tabular-nums}
+
+/* results */
+.scorewrap{display:flex;align-items:center;gap:18px;background:var(--surface);
+  border:1px solid var(--line);border-radius:var(--r);box-shadow:var(--shadow);
+  padding:20px 18px;margin-bottom:14px}
+.scorewrap svg{flex:0 0 116px;transform:rotate(-90deg)}
+.ringbg{stroke:var(--surface2)}
+.ringfg{stroke:url(#grad);stroke-linecap:round;
+  transition:stroke-dashoffset 1.1s cubic-bezier(.22,.9,.3,1)}
+#pct{font-size:34px;font-weight:800;letter-spacing:-.03em}
+#pctLbl{font-size:13px;color:var(--muted);font-weight:650}
+.scoretxt h2{margin:0 0 4px;font-size:21px;letter-spacing:-.02em}
+.scoretxt p{margin:0;font-size:14px;color:var(--muted)}
+.stats{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px}
+.stat{flex:1;min-width:120px;background:var(--surface);border:1px solid var(--line);
+  border-radius:14px;padding:11px 13px}
+.stat b{display:block;font-size:17px;letter-spacing:-.01em}
+.stat span{font-size:11.5px;color:var(--muted);text-transform:uppercase;
+  letter-spacing:.06em;font-weight:650}
+.rev{background:var(--surface);border:1px solid var(--line);border-radius:16px;
+  margin-bottom:11px;overflow:hidden;box-shadow:var(--shadow);
+  animation:fadeUp .4s cubic-bezier(.22,.9,.3,1) both}
+.rev .top{display:flex;gap:12px;padding:15px 15px 13px;align-items:flex-start}
+.badge{flex:0 0 26px;height:26px;border-radius:50%;display:grid;place-items:center;
+  font-weight:800;font-size:14px;color:#fff;margin-top:2px}
+.badge.y{background:var(--ok)} .badge.n{background:var(--bad)} .badge.q{background:var(--muted)}
+.rev .qq{font-size:15.5px;font-weight:650;line-height:1.45;flex:1}
+.ans{padding:0 15px 13px;font-size:14.5px;display:grid;gap:7px}
+.ans div{display:flex;gap:9px;align-items:flex-start}
+.ans .tag{flex:0 0 auto;font-size:11px;font-weight:750;text-transform:uppercase;
+  letter-spacing:.05em;color:var(--muted);padding-top:3px}
+.ans .val{flex:1}
+.ans .val.good{color:var(--ok);font-weight:650}
+.ans .val.bad{color:var(--bad);font-weight:600}
+.why{background:var(--surface2);border-top:1px dashed var(--line);padding:13px 15px;
+  font-size:14.5px;line-height:1.55;color:var(--text)}
+.why b{color:var(--accent2);font-size:11.5px;letter-spacing:.06em;
+  text-transform:uppercase;display:block;margin-bottom:5px}
+.rev .peek{width:100%;border:0;background:transparent;padding:11px 15px 13px;
+  font-size:13.5px;font-weight:700;color:var(--accent);text-align:left}
+.resnote{font-size:13px;color:var(--muted);margin:0 2px 10px;min-height:18px}
+.price{font-size:12.5px;color:var(--muted);margin:10px 0 0}
+/* credit / top-up sheet */
+.sheetwrap{position:fixed;inset:0;background:rgba(6,9,20,.55);backdrop-filter:blur(6px);z-index:65;
+  display:none;align-items:flex-end;justify-content:center}
+.sheetwrap.on{display:flex;animation:fadeIn .2s ease both}
+.sheet{width:100%;max-width:640px;background:var(--surface);border:1px solid var(--line);
+  border-bottom:0;border-radius:22px 22px 0 0;
+  padding:14px 18px calc(20px + var(--safe));
+  transform:translateY(100%);animation:sheetUp .34s cubic-bezier(.22,.9,.3,1) forwards}
+@keyframes sheetUp{to{transform:none}}
+.sheetgrip{width:42px;height:4px;border-radius:99px;background:var(--line);margin:0 auto 14px}
+.sheet h3{margin:0 0 6px;font-size:19px;letter-spacing:-.02em}
+.paymsg{margin:0 0 16px;font-size:14px;color:var(--muted)}
+.payopts{display:flex;flex-direction:column;gap:10px}
+.paybtn{display:flex;justify-content:space-between;align-items:center;width:100%;
+  background:var(--surface2);border:1.5px solid var(--line);border-radius:14px;
+  padding:15px 16px;font-size:16px;font-weight:700;color:var(--text);
+  transition:transform .12s,border-color .16s}
+.paybtn:active{transform:scale(.985)}
+.paybtn[disabled]{opacity:.45;pointer-events:none}
+.paybtn span{font-size:12.5px;font-weight:600;color:var(--muted)}
+.paymeta{margin:14px 0 0;font-size:12.5px;color:var(--muted);text-align:center}
+#payClose{margin-top:12px}
+.why.loading{color:var(--muted)}
+.why .sp{font-style:italic;animation:pulse 1.5s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:.45}50%{opacity:1}}
+
+/* toast */
+#toast{position:fixed;left:16px;right:16px;bottom:calc(18px + var(--safe));
+  background:#26131a;color:#ffdfe1;border:1px solid #7a2b34;border-radius:14px;
+  padding:13px 15px;font-size:14.5px;z-index:70;box-shadow:var(--shadow);
+  transform:translateY(calc(100% + 26px));transition:transform .32s cubic-bezier(.22,.9,.3,1);
+  max-width:608px;margin:0 auto}
+#toast.on{transform:none}
+.foot{text-align:center;font-size:12.5px;color:var(--muted);margin-top:22px}
+</style>
+</head>
+<body>
+<div id="prog"><i></i></div>
+<div class="app">
+  <header>
+    <div class="logo">R</div>
+    <div class="brand">Recall<small>paste → quiz → graded by Jev</small></div>
+    <button class="balance" id="credit" type="button" title="Add credit">
+      <span id="bal">…</span><span class="plus">+</span></button>
+  </header>
+
+  <!-- 1. PASTE -->
+  <section class="screen on" id="s-paste">
+    <h1>What do you want to be tested on?</h1>
+    <p class="sub">Paste a chapter, lecture notes or any text. Questions are written by a
+      free AI model — the answer key never leaves the server, so you can't peek.</p>
+    <div class="card">
+      <label class="lbl" for="src">Your material</label>
+      <textarea id="src" placeholder="Paste your textbook, notes, article…" spellcheck="false"></textarea>
+      <div class="meta"><span id="charCount">0 chars</span>
+        <button class="linkbtn" id="sample" type="button">try a sample</button></div>
+
+      <div style="margin-top:18px">
+        <label class="lbl">Questions</label>
+        <div class="chips" id="countChips">
+          <button class="chip" data-n="3">3</button>
+          <button class="chip sel" data-n="5">5</button>
+          <button class="chip" data-n="8">8</button>
+          <button class="chip" data-n="10">10</button>
+        </div>
+        <p class="price" id="priceLine"></p>
+      </div>
+
+      <div style="margin-top:16px">
+        <label class="lbl">Style</label>
+        <div class="seg" id="modeSeg">
+          <button class="sel" data-m="mixed">Mixed</button>
+          <button data-m="short">Written</button>
+          <button data-m="mc">Multiple choice</button>
+        </div>
+      </div>
+    </div>
+    <div class="cta">
+      <button class="btn" id="go" disabled>Generate my quiz</button>
+      <p class="hint" id="ctaHint"></p>
+    </div>
+  </section>
+
+  <!-- 2. QUIZ -->
+  <section class="screen" id="s-quiz">
+    <div class="qhead"><span id="qCount">Question 1 of 5</span><span id="qDone">0 answered</span></div>
+    <div class="stack" id="stack"></div>
+    <div class="dots" id="dots"></div>
+    <div class="nav">
+      <button class="btn ghost" id="prev">Back</button>
+      <button class="btn" id="next">Next</button>
+    </div>
+    <div class="nav"><button class="linkbtn" id="quit" style="margin:0 auto">start over</button></div>
+  </section>
+
+  <!-- 3. RESULTS -->
+  <section class="screen" id="s-res">
+    <div class="scorewrap">
+      <svg viewBox="0 0 120 120" width="116" height="116" aria-hidden="true">
+        <defs><linearGradient id="grad" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stop-color="#5b5bd6"/><stop offset="100%" stop-color="#a78bfa"/>
+        </linearGradient></defs>
+        <circle class="ringbg" cx="60" cy="60" r="52" fill="none" stroke-width="11"/>
+        <circle class="ringfg" id="ringfg" cx="60" cy="60" r="52" fill="none" stroke-width="11"
+                stroke-dasharray="326.7" stroke-dashoffset="326.7"/>
+      </svg>
+      <div class="scoretxt">
+        <div id="pct">0%</div>
+        <div id="pctLbl">SCORE</div>
+        <h2 id="resTitle">Results</h2>
+        <p id="resSub">graded by Jev against the hidden answer key</p>
+      </div>
+    </div>
+    <p class="resnote" id="resNote"></p>
+    <div id="review"></div>
+    <div class="row" style="margin-top:6px">
+      <button class="btn ghost" id="retake">Retake this quiz</button>
+      <button class="btn" id="again">New text</button>
+    </div>
+    <p class="foot" id="foot"></p>
+  </section>
+</div>
+
+<div id="ov"><div>
+  <div class="ring"></div>
+  <div id="ovMsg">Working…</div>
+  <div id="ovSub"></div>
+</div></div>
+
+<!-- credit / top-up sheet -->
+<div id="pay" class="sheetwrap">
+  <div class="sheet">
+    <div class="sheetgrip"></div>
+    <h3 id="payTitle">Add credit</h3>
+    <p class="paymsg" id="payMsg"></p>
+    <div class="payopts" id="payOpts"></div>
+    <p class="paymeta" id="payMeta"></p>
+    <button class="btn ghost" id="payClose" type="button">Not now</button>
+  </div>
+</div>
+<div id="toast"></div>
+
+<script>
+'use strict';
+const $ = s => document.querySelector(s);
+const SAMPLE = `Photosynthesis is the process by which green plants, algae and some bacteria convert light energy into chemical energy stored in glucose. It takes place mainly in the chloroplasts of plant cells, using the green pigment chlorophyll which absorbs light most strongly in the blue and red parts of the spectrum.
+
+During photosynthesis carbon dioxide from the air and water taken up by the roots are combined to form glucose, with oxygen released as a waste product. The overall equation is: 6CO2 + 6H2O + light energy → C6H12O6 + 6O2.
+
+The process happens in two stages. The light-dependent reactions occur in the thylakoid membranes and split water to release oxygen, producing the energy carriers ATP and NADPH. The light-independent reactions, known as the Calvin cycle, take place in the stroma and use ATP and NADPH to fix carbon dioxide into glucose.
+
+The rate of photosynthesis is affected by light intensity, carbon dioxide concentration and temperature. At low light levels, light is the limiting factor; as light increases, carbon dioxide becomes limiting instead.`;
+
+const S = {sid:null, qs:[], ans:{}, idx:0, count:5, mode:'mixed', res:null, gen:null, model:''};
+let ovTimer = null;
+
+/* ---------- helpers ---------- */
+function toast(msg){
+  const t = $('#toast'); t.textContent = msg; t.classList.add('on');
+  clearTimeout(t._h); t._h = setTimeout(()=>t.classList.remove('on'), 4200);
+}
+function show(id){
+  document.querySelectorAll('.screen').forEach(s=>s.classList.toggle('on', s.id===id));
+  const bar = $('#prog i');
+  bar.style.width = id === 's-res' ? '100%' : id === 's-quiz' && S.qs.length ? ((S.idx+1)/S.qs.length*100)+'%' : '0%';
+  window.scrollTo({top:0, behavior:'instant' in window ? 'auto':'auto'});
+}
+function overlay(on, msg, sub){
+  const o = $('#ov');
+  o.classList.toggle('on', !!on);
+  if(on){ $('#ovMsg').textContent = msg||'Working…'; $('#ovSub').textContent = sub||''; }
+  clearInterval(ovTimer);
+}
+function rotateMessages(list, subFn){
+  let i = 0;
+  $('#ovMsg').textContent = list[0];
+  ovTimer = setInterval(()=>{
+    i = (i+1) % list.length;
+    const m = $('#ovMsg');
+    m.style.opacity = 0;
+    setTimeout(()=>{ m.textContent = list[i]; m.style.opacity = 1; }, 230);
+    if(subFn) $('#ovSub').textContent = subFn();
+  }, 1900);
+}
+async function api(path, body, timeoutMs){
+  const ctl = new AbortController();
+  const t = setTimeout(()=>ctl.abort(), timeoutMs||180000);
+  try{
+    const r = await fetch(path, {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(body||{}), signal: ctl.signal});
+    const data = await r.json().catch(()=>({}));
+    if(!r.ok){
+      const e = new Error(data.error || ('HTTP ' + r.status));
+      e.status = r.status; e.body = data;
+      e.needCents = data.need_cents; e.balanceCents = data.balance_cents;
+      throw e;
+    }
+    return data;
+  } finally { clearTimeout(t); }
+}
+function esc(s){ return String(s).replace(/[&<>"']/g, c =>
+  ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function save(){ try{ sessionStorage.setItem('recall', JSON.stringify(S)); }catch(e){} }
+function load(){
+  try{
+    const raw = sessionStorage.getItem('recall'); if(!raw) return false;
+    const o = JSON.parse(raw);
+    if(o && o.sid && o.qs && o.qs.length){
+      Object.assign(S, o);
+      if(S.res){ renderResults(); show('s-res'); }
+      else { renderQuiz(false); show('s-quiz'); }
+      return true;
+    }
+  }catch(e){}
+  return false;
+}
+
+/* ---------- credit / billing ---------- */
+let ME = null;
+function fmtCents(c){
+  const sym = ME ? ME.symbol : '$';
+  const cur = ME ? ME.currency : 'USD';
+  if (c > 0 && c <= 10 && ME && ME.per_5_questions === 1) return c + (cur === 'USD' ? '¢' : 'p');
+  return sym + (c / 100).toFixed(2);
+}
+function quizPrice(n){ return Math.ceil((n || 5) / 5) * ((ME && ME.per_5_questions) || 1); }
+
+function paintMe(){
+  if(!ME) return;
+  const b = ME.balance_cents, p = quizPrice(S.count);
+  $('#bal').textContent = fmtCents(b);
+  $('#credit').classList.toggle('low', b < p);
+  $('#priceLine').textContent = `${fmtCents(ME.per_5_questions)} per 5 questions · this quiz ${fmtCents(p)}`;
+  const ready = src.value.trim().length >= 120, afford = b >= p;
+  $('#go').textContent = afford ? `Generate my quiz · ${fmtCents(p)}` : 'Add credit to continue';
+  $('#go').disabled = !(ready && afford);
+  $('#ctaHint').textContent = afford
+    ? `Balance ${fmtCents(b)} — credit never expires`
+    : `You need ${fmtCents(p - b)} more for this quiz`;
+}
+async function loadMe(){
+  try{
+    const r = await fetch('/api/me', {cache: 'no-store'});
+    ME = await r.json();
+    paintMe();
+    return ME;
+  }catch(e){ return null; }
+}
+function openPay(msg){
+  if(!ME){ loadMe().then(()=>openPay(msg)); return; }
+  const step = ME.topup_cents || 100, per5 = ME.per_5_questions || 1;
+  const ready = ME.payments_ready !== false;
+  $('#payMsg').textContent = ready
+    ? (msg || `${fmtCents(per5)} per 5 questions. Credit never expires.`)
+    : (msg || 'Almost there — the card provider account is being connected.');
+  $('#payOpts').innerHTML = [1, 2, 5].map(u => {
+    const amt = u * step, quizzes = Math.floor(amt / Math.max(1, per5));
+    return `<button class="paybtn" data-u="${u}" type="button"${ready ? '' : ' disabled'}>
+      <b>${ME.symbol}${(amt / 100).toFixed(2)}</b>
+      <span>${quizzes} quiz${quizzes === 1 ? '' : 'zes'}</span></button>`;
+  }).join('');
+  $('#payMeta').textContent = ready
+    ? ((ME.provider_note || ME.provider_label || '') )
+    : 'Payments are being switched on — check back shortly.';
+  $('#payOpts').querySelectorAll('.paybtn').forEach(b => {
+    if(ready) b.addEventListener('click', () => checkout(+b.dataset.u, b));
+  });
+  $('#pay').classList.add('on');
+}
+function closePay(){ $('#pay').classList.remove('on'); }
+async function checkout(units, btn){
+  const label = btn.innerHTML;
+  btn.disabled = true; btn.innerHTML = 'Opening checkout…';
+  try{
+    const d = await api('/api/checkout', {units}, 60000);
+    if(d && d.url){ location.href = d.url; return; }
+    throw new Error('no checkout url');
+  }catch(err){
+    btn.disabled = false; btn.innerHTML = label;
+    toast('Could not start checkout: ' + err.message);
+  }
+}
+$('#credit').addEventListener('click', () => openPay());
+$('#payClose').addEventListener('click', closePay);
+$('#pay').addEventListener('click', e => { if(e.target.id === 'pay') closePay(); });
+
+async function checkReturn(){
+  const u = new URL(location.href);
+  const paid = u.searchParams.get('paid');
+  if(!paid) return;
+  history.replaceState(null, '', u.pathname);
+  const before = ME ? ME.balance_cents : 0;
+  for(let i = 0; i < 6; i++){
+    const me = await loadMe();
+    if(me && me.balance_cents > before) break;
+    await new Promise(r => setTimeout(r, 1200));
+  }
+  if(ME && ME.balance_cents > before) toast('Credit added — balance ' + fmtCents(ME.balance_cents));
+  else toast('Payment received — credit appears as soon as the provider confirms.');
+}
+
+/* ---------- paste screen ---------- */
+const src = $('#src');
+src.addEventListener('input', ()=>{
+  $('#charCount').textContent = src.value.length.toLocaleString() + ' chars';
+  try{ sessionStorage.setItem('recall_src', src.value); }catch(e){}
+  paintMe();
+});
+$('#sample').addEventListener('click', ()=>{
+  src.value = SAMPLE;
+  src.dispatchEvent(new Event('input'));
+  src.focus();
+});
+$('#countChips').addEventListener('click', e=>{
+  const b = e.target.closest('.chip'); if(!b) return;
+  document.querySelectorAll('#countChips .chip').forEach(c=>c.classList.toggle('sel', c===b));
+  S.count = +b.dataset.n;
+  save(); paintMe();
+});
+$('#modeSeg').addEventListener('click', e=>{
+  const b = e.target.closest('button'); if(!b) return;
+  document.querySelectorAll('#modeSeg button').forEach(c=>c.classList.toggle('sel', c===b));
+  S.mode = b.dataset.m;
+});
+
+$('#go').addEventListener('click', async ()=>{
+  const text = src.value.trim();
+  if(text.length < 120){ toast('Paste at least a paragraph to work from.'); return; }
+  const btn = $('#go'); btn.disabled = true;
+  const t0 = Date.now();
+  overlay(true, 'Reading your material…');
+  rotateMessages([
+    'Reading your material…',
+    'Writing ' + S.count + ' questions…',
+    'Building the answer key (kept secret)…',
+    'Shuffling the multiple-choice options…'
+  ], ()=> 'elapsed ' + Math.round((Date.now()-t0)/1000) + 's');
+  try{
+    const d = await api('/api/generate', {text, count:S.count, mode:S.mode}, 200000);
+    S.sid = d.sid; S.qs = d.questions; S.ans = {}; S.idx = 0; S.res = null; S.gen = text;
+    S.model = '';
+    if(typeof d.balance_cents === 'number' && ME){ ME.balance_cents = d.balance_cents; }
+    save();
+    overlay(false);
+    renderQuiz(true);
+    show('s-quiz');
+    paintMe();
+    if(d.truncated) toast('Text was long — used the first 40,000 characters.');
+  }catch(err){
+    overlay(false);
+    if(err && err.message && /credit/i.test(err.message)){
+      if(ME && typeof err.needCents === 'number'){
+        ME.balance_cents = err.balanceCents;
+        paintMe();
+        openPay(`This quiz costs ${fmtCents(err.needCents)} — you're ${fmtCents(err.needCents - err.balanceCents)} short.`);
+      }else{ openPay(); }
+    }else{
+      toast(err.name === 'AbortError' ? 'That took too long — try fewer questions.' :
+            ('Could not generate: ' + err.message));
+    }
+  }finally{ paintMe(); }
+});
+
+/* ---------- quiz screen ---------- */
+function answeredCount(){ return S.qs.filter(q => (S.ans[q.id]||'').trim().length > 0).length; }
+
+function cardHTML(q){
+  const a = S.ans[q.id] || '';
+  const tag = q.type === 'mc' ? 'Multiple choice' : 'Written answer';
+  let body;
+  if(q.type === 'mc'){
+    body = '<div class="opts">' + q.options.map((o,i)=>
+      `<button class="opt${a===o?' sel':''}" data-opt="${i}" type="button">
+         <span class="k">${String.fromCharCode(65+i)}</span><span>${esc(o)}</span></button>`
+    ).join('') + '</div>';
+  }else{
+    body = `<textarea id="ans" rows="3" placeholder="Type your answer…">${esc(a)}</textarea>`;
+  }
+  return `<div class="qtype">${tag}</div><p class="qtext">${esc(q.q)}</p>${body}`;
+}
+
+function renderQuiz(animate, dir){
+  const q = S.qs[S.idx];
+  if(!q) return;
+  $('#qCount').textContent = `Question ${S.idx+1} of ${S.qs.length}`;
+  $('#qDone').textContent = answeredCount() + ' answered';
+  $('#prog i').style.width = ((S.idx+1)/S.qs.length*100) + '%';
+  $('#prev').style.display = S.idx === 0 ? 'none' : '';
+  $('#next').textContent = S.idx === S.qs.length-1 ? 'Submit answers' : 'Next';
+
+  const stack = $('#stack');
+  const old = stack.querySelector('.qcard');
+  const card = document.createElement('div');
+  card.className = 'qcard';
+  card.innerHTML = cardHTML(q);
+
+  if(animate && old){
+    old.classList.add('exit');
+    old.classList.add(dir >= 0 ? 'slideOutL' : 'slideOutR');
+    setTimeout(()=>old.remove(), 320);
+    card.classList.add(dir >= 0 ? 'slideInR' : 'slideInL');
+    stack.appendChild(card);
+    setTimeout(()=>card.classList.remove('slideInR','slideInL'), 340);
+  }else{
+    if(old) old.remove();
+    stack.appendChild(card);
+  }
+
+  // dots
+  $('#dots').innerHTML = S.qs.map((x,i)=>{
+    const done = (S.ans[x.id]||'').trim().length > 0;
+    return `<span class="dot${i===S.idx?' now':''}${done&&i!==S.idx?' done':''}"></span>`;
+  }).join('');
+
+  // wire inputs
+  card.querySelectorAll('.opt').forEach(b=>b.addEventListener('click', ()=>{
+    const q2 = S.qs[S.idx];
+    const val = q2.options[+b.dataset.opt];
+    S.ans[q2.id] = val; save();
+    card.querySelectorAll('.opt').forEach(x=>x.classList.toggle('sel', x===b));
+    $('#qDone').textContent = answeredCount() + ' answered';
+    $('#dots').children[S.idx]?.classList.add('done');
+    // gentle auto-advance
+    if(S.idx < S.qs.length-1){
+      setTimeout(()=>nav(1), 235);
+    }
+  }));
+  const ta = card.querySelector('#ans');
+  if(ta){
+    const grow = ()=>{ ta.style.height='auto'; ta.style.height = Math.max(110, ta.scrollHeight)+'px'; };
+    ta.addEventListener('input', ()=>{ S.ans[q.id] = ta.value; save(); grow();
+      $('#qDone').textContent = answeredCount() + ' answered';
+      $('#dots').children[S.idx]?.classList.toggle('done', ta.value.trim().length>0); });
+    grow();
+    if(animate) setTimeout(()=>ta.focus({preventScroll:true}), 360);
+    ta.addEventListener('keydown', e=>{
+      if(e.key === 'Enter' && !e.shiftKey){ e.preventDefault(); nav(1); }
+    });
+  }
+}
+
+function nav(dir){
+  const target = S.idx + dir;
+  if(target < 0) return;
+  if(target >= S.qs.length){ submit(); return; }
+  S.idx = target; save();
+  renderQuiz(true, dir);
+}
+$('#prev').addEventListener('click', ()=>nav(-1));
+$('#next').addEventListener('click', ()=>nav(1));
+$('#quit').addEventListener('click', ()=>{
+  if(confirm('Start over? Your answers for this quiz will be lost.')){
+    sessionStorage.removeItem('recall'); location.reload();
+  }
+});
+
+/* ---------- grading ---------- */
+async function submit(){
+  const unanswered = S.qs.filter(q => !(S.ans[q.id]||'').trim());
+  if(unanswered.length && !confirm(unanswered.length + ' question(s) unanswered — submit anyway?')) return;
+
+  const t0 = Date.now();
+  overlay(true, 'Sending your answers…');
+  rotateMessages([
+    'Sending your answers…',
+    'Jev is checking each answer…',
+    'Comparing against the hidden key…'
+  ], ()=> 'elapsed ' + Math.round((Date.now()-t0)/1000) + 's');
+  try{
+    const d = await api('/api/grade', {sid:S.sid, answers:S.ans}, 240000);
+    S.res = d; save();
+    overlay(false);
+    renderResults();
+    show('s-res');
+  }catch(err){
+    overlay(false);
+    if(err.message && err.message.includes('expired')){
+      toast('Your quiz expired — paste your text again.');
+      sessionStorage.removeItem('recall');
+      setTimeout(()=>location.reload(), 1400);
+    }else{
+      toast(err.name === 'AbortError' ? 'Grading timed out — tap submit again.' :
+            ('Grading failed: ' + err.message));
+    }
+  }
+}
+
+/* ---------- results ---------- */
+function renderResults(){
+  const r = S.res; if(!r) return;
+  const {correct, total} = r.score;
+  const pct = Math.round(correct/total*100);
+  const C = 326.7;
+  $('#ringfg').style.strokeDashoffset = C;
+  setTimeout(()=>{ $('#ringfg').style.strokeDashoffset = C * (1 - correct/total); }, 90);
+
+  // count-up
+  const el = $('#pct'); const dur = 900; const st = performance.now();
+  (function tick(now){
+    const p = Math.min(1, (now-st)/dur);
+    const eased = 1 - Math.pow(1-p, 3);
+    el.textContent = Math.round(pct*eased) + '%';
+    if(p < 1) requestAnimationFrame(tick);
+  })(st);
+
+  $('#pctLbl').textContent = 'SCORE';
+  $('#resTitle').textContent = pct >= 80 ? 'Strong work' : pct >= 50 ? 'Not bad — review below' : 'Worth another pass';
+  $('#resSub').textContent = `${correct} of ${total} correct`;
+
+  const letters = 'ABCDEFGH';
+  $('#review').innerHTML = r.results.map((res,i)=>{
+    const q = S.qs.find(x=>x.id===res.id) || {};
+    const badge = res.correct === true ? 'y' : res.correct === false ? 'n' : 'q';
+    const mark = res.correct === true ? '✓' : res.correct === false ? '✕' : '?';
+    const you = (res.student||'').trim();
+    let rows = '';
+    if(q.type === 'mc' && you){
+      const oi = (q.options||[]).indexOf(you);
+      rows += `<div><span class="tag">You</span><span class="val ${res.correct?'good':'bad'}">${oi>=0?letters[oi]+'. ':''}${esc(you)}</span></div>`;
+    }else if(you){
+      rows += `<div><span class="tag">You</span><span class="val ${res.correct?'good':'bad'}">${esc(you)}</span></div>`;
+    }else{
+      rows += `<div><span class="tag">You</span><span class="val bad">(no answer)</span></div>`;
+    }
+    if(res.correct !== true){
+      rows += `<div><span class="tag">Key</span><span class="val good">${esc(res.correct_answer||'')}</span></div>`;
+    }
+    const cached = (S.res.notes || {})[res.id];
+    const why = res.correct === false ?
+      (cached ? `<div class="why"><b>Why it's wrong</b>${esc(cached)}</div>`
+              : `<div class="why loading"><b>Why it's wrong</b><span class="sp">writing explanation…</span></div>`) : '';
+    const peek = res.correct === false ?
+      `<button class="peek" data-q="${res.id}"${cached ? ' data-cached="1"' : ''} type="button">Why it's wrong ▴</button>` : '';
+    return `<div class="rev" style="animation-delay:${i*55}ms">
+      <div class="top"><span class="badge ${badge}">${mark}</span>
+        <span class="qq">${esc(q.q||'')}</span></div>
+      <div class="ans">${rows}</div>${peek}${why}
+    </div>`;
+  }).join('');
+
+  // explanations arrive after grading: open them all, fill as they land
+  $('#review').querySelectorAll('.why').forEach(w=>{ w.style.display='block'; });
+  $('#review').querySelectorAll('.peek').forEach(b=>b.addEventListener('click', ()=>{
+    const why = b.nextElementSibling;
+    const open = why.style.display !== 'none';
+    why.style.display = open ? 'none' : 'block';
+    b.textContent = open ? "Why it's wrong ▾" : "Why it's wrong ▴";
+  }));
+
+  const showNote = r.results.some(x=>x.correct === false);
+  $('#resNote').textContent = showNote ? 'Writing explanations…' : '';
+  fetchExplanations();
+
+  const grads = r.graders || [];
+  $('#foot').textContent = 'Answer key stayed on the server — Jev judged each answer' +
+    (grads.includes('ai-fallback') ? ' (AI fallback used for some)' : '') + '.';
+}
+
+// one background request per wrong answer; the server caches each explanation
+function fetchExplanations(){
+  const cards = [...$('#review').querySelectorAll('.peek:not([data-cached])')];
+  let pending = cards.length;
+  if(!pending) return;
+  const done = ()=>{ if(--pending <= 0) $('#resNote').textContent = ''; };
+  cards.forEach((btn, i)=>{
+    const why = btn.nextElementSibling;
+    const qid = btn.dataset.q;
+    const run = async ()=>{
+      try{
+        const d = await api('/api/explain', {sid:S.sid, qid}, 200000);
+        if(d.explanation){
+          why.classList.remove('loading');
+          why.innerHTML = '';
+          const b = document.createElement('b'); b.textContent = "Why it's wrong";
+          why.appendChild(b); why.appendChild(document.createTextNode(d.explanation));
+          S.res.notes = Object.assign(S.res.notes||{}, {[qid]: d.explanation}); save();
+        }else{ throw new Error('empty'); }
+      }catch(err){
+        why.classList.remove('loading');
+        why.textContent = 'Explanation unavailable — the correct answer is shown above.';
+      }finally{ done(); }
+    };
+    setTimeout(run, i * 120);   // gentle stagger, they run in parallel server-side
+  });
+}
+
+$('#retake').addEventListener('click', ()=>{
+  S.ans = {}; S.idx = 0; S.res = null; save();
+  renderQuiz(true, -1); show('s-quiz');
+});
+$('#again').addEventListener('click', ()=>{
+  sessionStorage.removeItem('recall'); location.reload();
+});
+
+/* ---------- boot ---------- */
+const savedSrc = (()=>{ try{ return sessionStorage.getItem('recall_src') || ''; }catch(e){ return ''; } })();
+if(savedSrc){
+  src.value = savedSrc;
+  $('#charCount').textContent = savedSrc.length.toLocaleString() + ' chars';
+}
+if(!load()){ /* fresh visit */ }
+paintMe();
+loadMe().then(checkReturn);
+</script>
+<style>
+@keyframes slideInR{from{opacity:0;transform:translateX(46px)}to{opacity:1;transform:none}}
+@keyframes slideInL{from{opacity:0;transform:translateX(-46px)}to{opacity:1;transform:none}}
+@keyframes slideOutL{to{opacity:0;transform:translateX(-46px)}}
+@keyframes slideOutR{to{opacity:0;transform:translateX(46px)}}
+.slideInR{animation:slideInR .32s cubic-bezier(.22,.9,.3,1) both}
+.slideInL{animation:slideInL .32s cubic-bezier(.22,.9,.3,1) both}
+.slideOutL{animation:slideOutL .3s cubic-bezier(.4,0,.7,.4) both}
+.slideOutR{animation:slideOutR .3s cubic-bezier(.4,0,.7,.4) both}
+</style>
+</body>
+</html>

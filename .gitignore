@@ -1,0 +1,22 @@
+# your settings and keys — never commit these
+config.env
+.env
+*.env
+!*.env.example
+
+# ledger
+billing.db
+billing.db-shm
+billing.db-wal
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# editors / os
+.vscode/
+.idea/
+.DS_Store
+*.swp

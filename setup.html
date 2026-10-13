@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Recall — setup</title>
+<style>
+  :root{--bg:#0d0f13;--card:#161a21;--line:#262c36;--fg:#e8eaf0;--dim:#98a1b3;--acc:#6ea8fe;--ok:#3fb950;--warn:#d29922;--bad:#f85149}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;padding:20px 16px 80px}
+  .wrap{max-width:680px;margin:0 auto}
+  h1{font-size:22px;margin:0 0 4px}
+  .sub{color:var(--dim);font-size:13px;margin:0 0 18px}
+  .banner{border:1px solid var(--line);background:var(--card);border-radius:10px;padding:12px 14px;margin:0 0 18px;font-size:13px}
+  .banner.ok{border-color:rgba(63,185,80,.35)}
+  .banner.warn{border-color:rgba(210,153,34,.35)}
+  .banner.bad{border-color:rgba(248,81,73,.35)}
+  fieldset{border:1px solid var(--line);background:var(--card);border-radius:12px;padding:14px;margin:0 0 14px}
+  legend{color:var(--acc);font-size:12px;text-transform:uppercase;letter-spacing:.06em;padding:0 6px}
+  label{display:block;font-size:13px;margin:10px 0 4px}
+  .hint{color:var(--dim);font-size:12px;margin:2px 0 6px}
+  input,select{width:100%;padding:10px 11px;border-radius:8px;border:1px solid var(--line);background:#0f1319;color:var(--fg);font-size:14px;font-family:inherit}
+  input:focus,select:focus{outline:none;border-color:var(--acc)}
+  .row{display:flex;gap:8px;align-items:center}
+  .pill{font-size:11px;padding:2px 7px;border-radius:20px;border:1px solid var(--line);color:var(--dim);white-space:nowrap}
+  .pill.set{color:var(--ok);border-color:rgba(63,185,80,.4)}
+  .pill.req{color:var(--warn);border-color:rgba(210,153,34,.4)}
+  button{margin-top:16px;width:100%;padding:13px;border:0;border-radius:10px;background:var(--acc);color:#06111f;font-size:15px;font-weight:600;cursor:pointer}
+  button:disabled{opacity:.5;cursor:default}
+  .msg{margin-top:12px;font-size:13px;min-height:20px}
+  .msg.ok{color:var(--ok)}.msg.bad{color:var(--bad)}
+  code{background:#0f1319;border:1px solid var(--line);border-radius:6px;padding:1px 5px;font-size:12px}
+  a{color:var(--acc)}
+  .foot{color:var(--dim);font-size:12px;margin-top:22px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Recall — bring your own keys</h1>
+  <p class="sub">Paste in your own API keys. They are written to <code>config.env</code> on this machine (chmod 600), never sent anywhere else, and never committed to git.</p>
+  <div id="banner" class="banner warn">Loading…</div>
+  <form id="f" autocomplete="off"></form>
+  <button id="go" type="button" disabled>Save and start</button>
+  <div id="msg" class="msg"></div>
+  <p class="foot">
+    Grading and generation keys are required; payments are optional (the built-in test
+    checkout runs the whole paid flow with no provider).<br>
+    Once saved, open <a href="/">the app</a> · owner tools at <a href="/admin">/admin</a>.
+  </p>
+</div>
+<script>
+const $ = s => document.querySelector(s);
+let STATUS = null;
+
+function el(tag, attrs, ...kids){
+  const n = document.createElement(tag);
+  for (const [k,v] of Object.entries(attrs||{})){
+    if (k === 'class') n.className = v; else if (k === 'text') n.textContent = v; else n.setAttribute(k, v);
+  }
+  kids.forEach(k => n.append(k));
+  return n;
+}
+
+function fieldNode(f){
+  const box = document.createDocumentFragment();
+  const lab = el('label', {for: 'k_' + f.key});
+  lab.append(document.createTextNode(f.label));
+  lab.append(document.createTextNode(' '));
+  if (f.required) lab.append(el('span', {class: 'pill req', text: 'required'}));
+  if (f.secret)   lab.append(el('span', {class: 'pill' + (f.is_set ? ' set' : ''), text: f.is_set ? 'set' : 'not set'}));
+  box.append(lab);
+  if (f.hint) box.append(el('p', {class: 'hint', text: f.hint}));
+  let input;
+  if (f.choices){
+    input = el('select', {id: 'k_' + f.key, name: f.key});
+    f.choices.forEach(c => {
+      const o = el('option', {value: c, text: c});
+      if (c === f.value) o.selected = true;
+      input.append(o);
+    });
+  } else {
+    const attrs = {id: 'k_' + f.key, name: f.key};
+    if (f.secret){ attrs.type = 'password'; attrs.placeholder = f.is_set ? '•••••••• set — leave blank to keep' : 'paste key'; }
+    else { attrs.type = 'text'; attrs.value = f.value || ''; }
+    input = el('input', attrs);
+  }
+  box.append(el('div', {class: 'row'}, input));
+  return box;
+}
+
+function render(){
+  const f = $('#f');
+  f.textContent = '';
+  STATUS.groups.forEach(g => {
+    const fields = STATUS.fields.filter(x => x.group === g && x.key !== 'SETUP_TOKEN');
+    if (!fields.length) return;
+    const fs = el('fieldset');
+    fs.append(el('legend', {text: g}));
+    fields.forEach(x => fs.append(fieldNode(x)));
+    f.append(fs);
+  });
+  const b = $('#banner');
+  if (STATUS.ready){
+    b.className = 'banner ok';
+    b.textContent = 'Configured — the app is live. Change anything below and save, or open the app.';
+  } else {
+    b.className = 'banner bad';
+    b.textContent = 'Not configured yet. Still needed: ' + STATUS.missing.join(', ') +
+      '. Written to ' + STATUS.config_path + '.';
+  }
+  $('#go').disabled = false;
+}
+
+function collect(){
+  const out = {};
+  document.querySelectorAll('#f input,#f select').forEach(i => { out[i.name] = i.value; });
+  return out;
+}
+
+async function load(){
+  try {
+    const r = await fetch('/api/setup', {headers: {'Accept': 'application/json'}});
+    if (!r.ok) throw new Error('HTTP ' + r.status + ' — ' + (await r.text()).slice(0,120));
+    STATUS = await r.json();
+    render();
+  } catch (e){
+    $('#banner').className = 'banner bad';
+    $('#banner').textContent = 'Could not load settings: ' + e.message +
+      '  (the setup page is only reachable from the machine itself, or with ?token=)';
+  }
+}
+
+$('#go').addEventListener('click', async () => {
+  const btn = $('#go'), msg = $('#msg');
+  btn.disabled = true; msg.className = 'msg'; msg.textContent = 'Saving…';
+  try {
+    const r = await fetch('/api/setup', {method: 'POST', headers: {'Content-Type': 'application/json'},
+                                        body: JSON.stringify(collect())});
+    const body = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(body.error || ('HTTP ' + r.status));
+    msg.className = 'msg ok';
+    msg.textContent = body.ready ? 'Saved. Everything needed is in place — opening the app…'
+                                 : 'Saved. Still needed: ' + (body.missing || []).join(', ');
+    STATUS = body.status || STATUS;
+    render();
+    if (body.ready) setTimeout(() => { location.href = '/'; }, 900);
+  } catch (e){
+    msg.className = 'msg bad'; msg.textContent = 'Could not save: ' + e.message;
+  } finally { btn.disabled = false; }
+});
+
+load();
+</script>
+</body>
+</html>
