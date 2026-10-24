@@ -49,6 +49,10 @@ FIELDS = [
     dict(group="Generation", key="NVIDIA_URL", label="NVIDIA endpoint",
          default="https://integrate.api.nvidia.com/v1/chat/completions"),
     # ---- payments -----------------------------------------------------------
+    dict(group="Payments", key="PAYMENTS_ENABLED", label="Take payments", default="no",
+         choices=["no", "yes"],
+         hint="no = completely free: no balance, no checkout, nothing to pay. "
+              "yes = charge per quiz and show a top-up button."),
     dict(group="Payments", key="PAYMENT_PROVIDER", label="Payment provider", default="mock",
          choices=["mock", "plisio", "cryptomus"],
          hint="mock = free/test checkout (no keys, no money). plisio = crypto checkout, "

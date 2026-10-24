@@ -19,6 +19,9 @@ import billing  # noqa: E402
 
 def main() -> int:
     dry = "--status" in sys.argv
+    if not billing.PAYMENTS_ENABLED:
+        print("payments are turned off — nothing to reconcile")
+        return 0
     prov = billing.provider()
     if not hasattr(prov, "check_invoice"):
         print("provider %s cannot be reconciled" % prov.name)

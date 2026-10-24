@@ -437,6 +437,16 @@ function quizPrice(n){ return Math.ceil((n || 5) / 5) * ((ME && ME.per_5_questio
 
 function paintMe(){
   if(!ME) return;
+  if(ME.payments_enabled === false){
+    // free instance: no balance, no prices, no paywall — just generate
+    $('#credit').style.display = 'none';
+    $('#priceLine').textContent = 'Free — unlimited quizzes, nothing to pay';
+    const canGo = src.value.trim().length >= 120;
+    $('#go').textContent = 'Generate my quiz';
+    $('#go').disabled = !canGo;
+    $('#ctaHint').textContent = canGo ? 'No account, no card — completely free.' : '';
+    return;
+  }
   const b = ME.balance_cents, p = quizPrice(S.count);
   $('#bal').textContent = fmtCents(b);
   $('#credit').classList.toggle('low', b < p);
@@ -495,6 +505,7 @@ $('#payClose').addEventListener('click', closePay);
 $('#pay').addEventListener('click', e => { if(e.target.id === 'pay') closePay(); });
 
 async function checkReturn(){
+  if(ME && ME.payments_enabled === false) return;
   const u = new URL(location.href);
   const paid = u.searchParams.get('paid');
   if(!paid) return;
@@ -558,7 +569,7 @@ $('#go').addEventListener('click', async ()=>{
     if(d.truncated) toast('Text was long — used the first 40,000 characters.');
   }catch(err){
     overlay(false);
-    if(err && err.message && /credit/i.test(err.message)){
+    if(ME && ME.payments_enabled !== false && err && err.message && /credit/i.test(err.message)){
       if(ME && typeof err.needCents === 'number'){
         ME.balance_cents = err.balanceCents;
         paintMe();

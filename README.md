@@ -11,7 +11,9 @@ you start it, the app asks you for your own API keys and writes them to a local
 
 * Python 3.9+ standard library only — no pip install, no framework, no build step
 * Single-page mobile UI, works as a phone-friendly web app
-* Optional paid mode: 1¢ per 5 questions, $1 top-ups, anonymous cookie accounts
+* **Free by default** — no accounts, no paywall, nothing to buy
+* Optional paid mode (off unless you turn it on): 1¢ per 5 questions, $1 top-ups,
+  anonymous cookie accounts
 * Grading happens server-side; the answer key never reaches the browser
 
 ## Quickstart
@@ -61,7 +63,11 @@ Note that a quick tunnel gets a **new hostname every restart** — fine for test
 buyers' credit lives in a cookie scoped to the hostname, so use a stable hostname on a real
 tunnel before charging anyone.
 
-## Payments (optional)
+## Payments (optional, off by default)
+
+Out of the box the app is **free**: `PAYMENTS_ENABLED=no` (the default) means no balance, no
+checkout, no ledger and no per-quiz charge — the billing module is never touched. Turn it on
+with `PAYMENTS_ENABLED=yes` if you want to charge, and pick a provider below.
 
 Left as `mock`, the app runs a **built-in test checkout**: a local page that walks the entire
 paid flow — invoice → signed webhook → credit → charge per quiz — with no money and no
@@ -111,6 +117,7 @@ see `.env.example` for the full list with defaults. The interesting ones:
 
 | Setting | Default | Meaning |
 |---|---|---|
+| `PAYMENTS_ENABLED` | `no` | `no` = free instance (no balance/checkout). `yes` = charge per quiz |
 | `PRICE_PER_5_CENTS` | `1` | minor units per 5 questions (1 = 1¢) |
 | `TOPUP_CENTS` | `100` | top-up step ($1.00) |
 | `FREE_CREDIT_CENTS` | `0` | free trial credit per new account |
@@ -135,10 +142,10 @@ GET  /api/me               balance, prices, payment state
 POST /api/generate         {text, count} -> questions (answer key withheld)
 POST /api/grade            {sid, answers} -> scored, per-question verdicts
 POST /api/explain          why an answer was wrong (lazy)
-POST /api/checkout         {units} -> hosted checkout url
-POST /api/webhook/<prov>   provider callback, signature-verified, idempotent
-GET  /admin?token=&cents=  owner credit page
-GET  /api/admin/reconcile  settle paid-but-uncredited orders
+POST /api/checkout         {units} -> hosted checkout url   (payments on only)
+POST /api/webhook/<prov>   provider callback, signature-verified, idempotent  (payments on only)
+GET  /admin?token=&cents=  owner credit page               (payments on only)
+GET  /api/admin/reconcile  settle paid-but-uncredited orders (payments on only)
 ```
 
 ## Tests

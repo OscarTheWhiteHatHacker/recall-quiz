@@ -47,6 +47,19 @@ FREE_CENTS = int(os.environ.get("FREE_CREDIT_CENTS", "0"))       # signup credit
 MIN_TOPUP_CENTS = TOPUP_CENTS
 MAX_BALANCE_CENTS = int(os.environ.get("MAX_BALANCE_CENTS", "10000"))
 
+
+def _enabled_from_env() -> bool:
+    """Payments are OFF unless the operator asks for them (PAYMENTS_ENABLED=yes).
+
+    With payments off the app is simply free: no balance, no checkout, no charge — the
+    billing ledger is never touched.
+    """
+    return str(os.environ.get("PAYMENTS_ENABLED", "no")).strip().lower() in \
+        ("yes", "1", "true", "on")
+
+
+PAYMENTS_ENABLED = _enabled_from_env()
+
 DB_PATH = os.environ.get("BILLING_DB", os.path.join(os.path.dirname(os.path.abspath(__file__)), "billing.db"))
 
 _LOCK = threading.RLock()
@@ -57,12 +70,14 @@ _CONN = None
 def reload() -> None:
     """Re-read pricing/currency settings (the wizard can change them at runtime)."""
     global CURRENCY, CURRENCY_SYMBOL, PRICE_PER_5, TOPUP_CENTS, FREE_CENTS, MAX_BALANCE_CENTS
+    global PAYMENTS_ENABLED
     CURRENCY = os.environ.get("CURRENCY", "USD").upper()
     CURRENCY_SYMBOL = os.environ.get("CURRENCY_SYMBOL", "$" if CURRENCY == "USD" else "£")
     PRICE_PER_5 = int(os.environ.get("PRICE_PER_5_CENTS", "1"))
     TOPUP_CENTS = int(os.environ.get("TOPUP_CENTS", "100"))
     FREE_CENTS = int(os.environ.get("FREE_CREDIT_CENTS", "0"))
     MAX_BALANCE_CENTS = int(os.environ.get("MAX_BALANCE_CENTS", "10000"))
+    PAYMENTS_ENABLED = _enabled_from_env()
 
 
 def db():

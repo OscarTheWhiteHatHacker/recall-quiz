@@ -612,7 +612,8 @@ class Handler(SimpleHTTPRequestHandler):
                                     "providers": [p[0] for p in ai_providers()],
                                     "nvidia_key": bool(nvidia_key()),
                                     "jev_key": bool(jev_key()),
-                                    "payment_provider": billing.provider().name,
+                                    "payments_enabled": billing.PAYMENTS_ENABLED,
+                                    "payment_provider": billing.provider().name if billing.PAYMENTS_ENABLED else None,
                                     "keys_ready": billing.payments_ready(),
                                     "configured": _config.is_ready(),
                                     "missing": _config.missing(),
@@ -671,14 +672,21 @@ class Handler(SimpleHTTPRequestHandler):
 
     # ------------------------------------------------------------------ billing
     def _me(self):
+        if not billing.PAYMENTS_ENABLED:
+            # free mode: nothing to buy, nothing to charge — no account is created
+            return self._send(200, {"payments_enabled": False, "free": True})
         token, is_new = self._account()
         s = billing.account_summary(token)
         body = dict(s)
         body.update(billing.price_table())
         body["topup_step_cents"] = billing.TOPUP_CENTS
+        body["payments_enabled"] = True
         return self._send(200, body, set_cookie=self._cookie(token) if is_new else None)
 
     def _checkout(self):
+        if not billing.PAYMENTS_ENABLED:
+            return self._send(404, {"error": "payments are turned off on this instance",
+                                    "payments_enabled": False})
         body = self._body()
         token, is_new = self._account()
         try:
@@ -705,6 +713,8 @@ class Handler(SimpleHTTPRequestHandler):
                           set_cookie=self._cookie(token) if is_new else None)
 
     def _webhook(self, name):
+        if not billing.PAYMENTS_ENABLED:
+            return self._send(404, {"error": "payments are turned off on this instance"})
         raw = self.rfile.read(int(self.headers.get("Content-Length") or 0)) if self.headers.get("Content-Length") else b"{}"
         if name == "mock" and billing.provider().name != "mock":
             sys.stderr.write("[billing] refused mock webhook: real provider is configured\n")
@@ -736,6 +746,8 @@ class Handler(SimpleHTTPRequestHandler):
                                 "order_id": order_id})
 
     def _admin_credit(self):
+        if not billing.PAYMENTS_ENABLED:
+            return self._send(404, {"error": "payments are turned off on this instance"})
         want = os.environ.get("ADMIN_TOKEN", "").strip()
         if not want or not hmac.compare_digest(self.headers.get("X-Admin-Token", ""), want):
             return self._send(403, {"error": "admin token required"})
@@ -753,6 +765,8 @@ class Handler(SimpleHTTPRequestHandler):
         A missed callback must never mean a customer paid and got nothing, so this asks
         the provider about every uncredited invoice we created and credits the paid ones
         through the same idempotent settle path the webhook uses."""
+        if not billing.PAYMENTS_ENABLED:
+            return self._send(404, {"error": "payments are turned off on this instance"})
         want = os.environ.get("ADMIN_TOKEN", "").strip()
         q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
         given = self.headers.get("X-Admin-Token") or (q.get("token") or [""])[0]
@@ -788,6 +802,8 @@ class Handler(SimpleHTTPRequestHandler):
     def _admin_page(self):
         """Owner-only top-up page: /admin?token=<ADMIN_TOKEN>&cents=100 credits the
         browser account in front of it, so the app can be tested on a phone without paying."""
+        if not billing.PAYMENTS_ENABLED:
+            return self._send(404, {"error": "payments are turned off on this instance"})
         want = os.environ.get("ADMIN_TOKEN", "").strip()
         q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
         given = (q.get("token") or [""])[0]
@@ -816,6 +832,8 @@ class Handler(SimpleHTTPRequestHandler):
     def _mockpay_page(self, order_id):
         """Local stand-in for a hosted checkout so the paid flow can be tested with no keys.
         Hard-disabled unless the service is actually running the mock provider."""
+        if not billing.PAYMENTS_ENABLED:
+            return self._send(404, {"error": "not found"})
         if billing.provider().name != "mock":
             return self._send(404, {"error": "not found"})
         secret = os.environ.get("MOCK_WEBHOOK_SECRET", "")
@@ -854,32 +872,40 @@ class Handler(SimpleHTTPRequestHandler):
         if mode not in ("mixed", "short", "mc"):
             mode = "mixed"
 
-        # ---- paid gate: 1¢ per 5 questions, charged only if generation succeeds
-        token, is_new = self._account()
-        price = billing.price_for(count)
-        set_cookie = self._cookie(token) if is_new else None
-        have = billing.balance(token)
-        if have < price:
-            return self._send(402, {"error": "Not enough credit",
-                                    "need_cents": price, "balance_cents": have,
-                                    "short_cents": price - have,
-                                    "quizzes_left": have // max(1, billing.PRICE_PER_5),
-                                    "prices": billing.price_table()},
-                              set_cookie=set_cookie)
+        # ---- paid gate: charged only when payments are on, and only if generation succeeds
+        token = ""
+        set_cookie = None
+        price = 0
+        if billing.PAYMENTS_ENABLED:
+            token, is_new = self._account()
+            price = billing.price_for(count)
+            set_cookie = self._cookie(token) if is_new else None
+            have = billing.balance(token)
+            if have < price:
+                return self._send(402, {"error": "Not enough credit",
+                                        "need_cents": price, "balance_cents": have,
+                                        "short_cents": price - have,
+                                        "quizzes_left": have // max(1, billing.PRICE_PER_5),
+                                        "prices": billing.price_table()},
+                                  set_cookie=set_cookie)
 
         questions, provider = generate_questions(text, count, mode)
-        paid, price, left = billing.charge(token, count)
-        if not paid:                     # someone spent the balance mid-flight
-            return self._send(402, {"error": "Not enough credit", "need_cents": price,
-                                    "balance_cents": left, "short_cents": price - left,
-                                    "prices": billing.price_table()}, set_cookie=set_cookie)
+        left = 0
+        if billing.PAYMENTS_ENABLED:
+            paid, price, left = billing.charge(token, count)
+            if not paid:                     # someone spent the balance mid-flight
+                return self._send(402, {"error": "Not enough credit", "need_cents": price,
+                                        "balance_cents": left, "short_cents": price - left,
+                                        "prices": billing.price_table()}, set_cookie=set_cookie)
         sid = secrets.token_urlsafe(16)
         with S_LOCK:
             _purge()
             SESSIONS[sid] = {"t": time.time(), "text": text, "questions": questions,
                              "token": token}
-        sys.stderr.write("[billing] charged %d (balance %d) for %dq\n" % (price, left, count))
+        if billing.PAYMENTS_ENABLED:
+            sys.stderr.write("[billing] charged %d (balance %d) for %dq\n" % (price, left, count))
         return self._send(200, {"sid": sid, "truncated": truncated,
+                                "free": not billing.PAYMENTS_ENABLED,
                                 "price_cents": price, "balance_cents": left,
                                 "questions": [public_question(q) for q in questions]},
                           set_cookie=set_cookie)
@@ -971,13 +997,17 @@ def main():
             sys.stderr.write("[recall] WARNING: no Jev key — grading falls back to the AI model\n")
     chain = ", ".join(p[0] for p in ai_providers()) or "none"
     pay = billing.provider()
-    print("Recall -> http://%s:%d/   (gen=%s, judge=jev-latest, pay=%s, %s per 5q, %s%s top-ups)"
-          % (HOST, PORT, chain, pay.name, billing.fmt(billing.PRICE_PER_5),
-             billing.CURRENCY_SYMBOL, "%.2f" % (billing.TOPUP_CENTS / 100.0)))
-    if _config.is_ready() and not billing.payments_ready():
+    if billing.PAYMENTS_ENABLED:
+        print("Recall -> http://%s:%d/   (gen=%s, judge=jev-latest, pay=%s, %s per 5q, %s%s top-ups)"
+              % (HOST, PORT, chain, pay.name, billing.fmt(billing.PRICE_PER_5),
+                 billing.CURRENCY_SYMBOL, "%.2f" % (billing.TOPUP_CENTS / 100.0)))
+    else:
+        print("Recall -> http://%s:%d/   (gen=%s, judge=jev-latest, payments off — free)"
+              % (HOST, PORT, chain))
+    if billing.PAYMENTS_ENABLED and _config.is_ready() and not billing.payments_ready():
         sys.stderr.write("[recall] WARNING: PAYMENT_PROVIDER=%s has no keys — checkout will "
                          "fail until they are set (setup page)\n" % pay.name)
-    if pay.name == "mock" and not os.environ.get("MOCK_WEBHOOK_SECRET"):
+    if billing.PAYMENTS_ENABLED and pay.name == "mock" and not os.environ.get("MOCK_WEBHOOK_SECRET"):
         sys.stderr.write("[recall] note: mock checkout needs MOCK_WEBHOOK_SECRET to complete "
                          "test payments\n")
     try:

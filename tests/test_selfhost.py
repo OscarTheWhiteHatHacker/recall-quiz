@@ -114,6 +114,64 @@ def env_deployment():
         shutil.rmtree(env_tmp, ignore_errors=True)
 
 
+def free_deployment():
+    """The default: an instance with payments off is simply free — nothing to buy."""
+    print("\n8. payments off (the default) — a free instance")
+    free_tmp = tempfile.mkdtemp(prefix="recall-free-")
+    env = dict(os.environ)
+    env.pop("PAYMENTS_ENABLED", None)
+    env.update({"RECALL_CONFIG": os.path.join(free_tmp, "config.env"),
+                "BILLING_DB": os.path.join(free_tmp, "billing.db"), "PORT": str(PORT + 2),
+                "TYPESAFE_API_KEY": "free-jev", "OLLAMA_API_KEY": "free-ollama",
+                "PYTHONUNBUFFERED": "1"})
+    p3 = subprocess.Popen([sys.executable, "-u", os.path.join(ROOT, "server.py")], cwd=ROOT,
+                          env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    base3 = "http://127.0.0.1:%d" % (PORT + 2)
+    try:
+        for _ in range(60):
+            time.sleep(0.25)
+            try:
+                with urllib.request.urlopen(base3 + "/api/health", timeout=2) as resp:
+                    h = json.loads(resp.read().decode())
+                break
+            except Exception:
+                if p3.poll() is not None:
+                    raise RuntimeError("free-mode server exited")
+        else:
+            raise RuntimeError("free-mode server did not come up")
+        check("health says payments are off", h.get("payments_enabled") is False, h)
+        with urllib.request.urlopen(base3 + "/api/me", timeout=10) as resp:
+            me = json.loads(resp.read().decode())
+        check("/api/me reports a free instance", me.get("payments_enabled") is False
+              and me.get("free") is True, me)
+        check("no account cookie is set when there is nothing to buy",
+              not (resp.headers.get("Set-Cookie") or ""))
+        code = _status(base3 + "/api/checkout", {"units": 1})
+        check("checkout is refused", code == 404, code)
+        check("the owner credit page is gone", _status(base3 + "/admin?token=x&cents=100") == 404)
+        check("the ledger was never created",
+              not os.path.exists(os.path.join(free_tmp, "billing.db")))
+        check("the app itself still serves", _status(base3 + "/") == 200)
+    finally:
+        p3.terminate()
+        try:
+            p3.wait(timeout=10)
+        except Exception:
+            p3.kill()
+        shutil.rmtree(free_tmp, ignore_errors=True)
+
+
+def _status(url, data=None):
+    body = json.dumps(data).encode() if isinstance(data, dict) else None
+    r = urllib.request.Request(url, data=body,
+                               headers={"Content-Type": "application/json"} if body else {})
+    try:
+        with urllib.request.urlopen(r, timeout=15) as resp:
+            return resp.status
+    except urllib.error.HTTPError as e:
+        return e.code
+
+
 def main():
     proc = start()
     try:
@@ -141,7 +199,8 @@ def main():
               all(f["value"] == "" for f in r["fields"] if f["secret"]),
               [f["key"] for f in r["fields"] if f["secret"] and f["value"]])
         saved = {"TYPESAFE_API_KEY": "jev-test-key", "OLLAMA_API_KEY": "ollama-test-key",
-                 "PAYMENT_PROVIDER": "mock", "PUBLIC_BASE_URL": BASE, "PORT": str(PORT)}
+                 "PAYMENTS_ENABLED": "yes", "PAYMENT_PROVIDER": "mock",
+                 "PUBLIC_BASE_URL": BASE, "PORT": str(PORT)}
         s, r, _ = req("/api/setup", saved, {"Content-Type": "application/json"})
         check("settings save and the app becomes ready", s == 200 and r.get("ready") is True,
               "%s %s" % (s, r.get("missing")))
@@ -171,6 +230,7 @@ def main():
         check("root serves the app", s == 200 and "bring your own keys" not in body, s)
         s, me, hdrs = req("/api/me")
         check("accounts still work unconfigured-after-setup", s == 200 and me["balance_cents"] == 0, s)
+        check("payments are reported as on when enabled", me.get("payments_enabled") is True, me)
         cookie = (hdrs.get("Set-Cookie") or "").split(";")[0]
 
         print("\n6. the whole paid flow, through the built-in test checkout")
@@ -198,6 +258,7 @@ def main():
         shutil.rmtree(TMP, ignore_errors=True)
 
     env_deployment()
+    free_deployment()
 
     print("\n%d passed, %d failed" % (len(PASS), len(FAIL)))
     if FAIL:
