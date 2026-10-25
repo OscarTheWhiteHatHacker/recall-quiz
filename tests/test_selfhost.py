@@ -9,12 +9,14 @@ provider so the whole thing is verifiable without a single real API key.
 """
 import hashlib
 import hmac
+import http.server
 import json
 import os
 import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -239,6 +241,101 @@ def visitor_keys_deployment():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+class _StubProvider(http.server.BaseHTTPRequestHandler):
+    """A fake Ollama + Jev that answers only callers holding the visitor's key.
+
+    Lets the whole quiz flow be tested with no network and no real credentials: if the app
+    used the operator's key (or no key), every call would come back 401.
+    """
+    protocol_version = "HTTP/1.1"
+    ollama_key = "visitor-ollama-key"
+    jev_key = "visitor-jev-key"
+    calls = []
+
+    def log_message(self, *args):
+        pass
+
+    def _json(self, status, obj):
+        payload = json.dumps(obj).encode()
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
+    def do_POST(self):
+        body = self.rfile.read(int(self.headers.get("Content-Length") or 0))
+        auth = self.headers.get("Authorization") or ""
+        self.calls.append((self.path, auth))
+        want = self.jev_key if self.path.endswith("/systemone") else self.ollama_key
+        if auth != "Bearer " + want:
+            return self._json(401, {"error": {"message": "Unauthorized"}})
+        if self.path.endswith("/systemone"):
+            return self._json(200, {"answers": {"verdict": {"choice": "correct", "confidence": 1.0}},
+                                    "usage": {}})
+        quiz = {"questions": [
+            {"q": "What drives evaporation in the water cycle?", "type": "mc",
+             "options": ["The sun", "The moon", "Wind", "Rain"], "key": "The sun"},
+            {"q": "What is precipitation?", "type": "short",
+             "key": "Water falling from the clouds", "alts": []},
+        ]}
+        return self._json(200, {"choices": [{"message": {"content": json.dumps(quiz)}}]})
+
+
+def stub_flow_deployment():
+    """The happy path on visitor keys, with fake providers standing in for Ollama and Jev."""
+    print("\n10. a whole quiz on visitor keys (stub providers, no network)")
+    stub = http.server.ThreadingHTTPServer(("127.0.0.1", PORT + 5), _StubProvider)
+    threading.Thread(target=stub.serve_forever, daemon=True).start()
+    tmp = tempfile.mkdtemp(prefix="recall-stub-")
+    env = dict(os.environ)
+    env.pop("TYPESAFE_API_KEY", None)
+    env.update({"RECALL_CONFIG": os.path.join(tmp, "config.env"),
+                "BILLING_DB": os.path.join(tmp, "billing.db"), "PORT": str(PORT + 4),
+                "KEYS_FROM_VISITORS": "yes", "OLLAMA_API_KEY": "operator-key-is-ignored",
+                "OLLAMA_URL": "http://127.0.0.1:%d/v1/chat/completions" % (PORT + 5),
+                "NVIDIA_URL": "http://127.0.0.1:%d/v1/chat/completions" % (PORT + 5),
+                "JEV_URL": "http://127.0.0.1:%d/v1/systemone" % (PORT + 5),
+                "PYTHONUNBUFFERED": "1"})
+    p = subprocess.Popen([sys.executable, "-u", os.path.join(ROOT, "server.py")], cwd=ROOT,
+                         env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    base = "http://127.0.0.1:%d" % (PORT + 4)
+    keys = {"ollama": _StubProvider.ollama_key, "typesafe": _StubProvider.jev_key}
+    try:
+        for _ in range(60):
+            time.sleep(0.25)
+            try:
+                urllib.request.urlopen(base + "/api/health", timeout=2).read()
+                break
+            except Exception:
+                if p.poll() is not None:
+                    raise RuntimeError("stub-flow server exited")
+        else:
+            raise RuntimeError("stub-flow server did not come up")
+        s, d = _post_at(base, "/api/generate", {"text": "x" * 200, "count": 5, "keys": keys})
+        questions = d.get("questions") or []
+        check("a quiz is generated with the visitor's key", s == 200 and len(questions) == 2,
+              (s, str(d)[:140]))
+        check("the answer key never reaches the browser",
+              all(not ({"key", "alts", "answer_text"} & set(q)) for q in questions), questions)
+        answers = {q["id"]: "The sun" for q in questions}
+        s, g = _post_at(base, "/api/grade", {"sid": d.get("sid"), "answers": answers, "keys": keys})
+        check("grading runs on the visitor's Jev key", s == 200 and g.get("graders") == ["jev"],
+              (s, str(g)[:160]))
+        used = {auth for _, auth in _StubProvider.calls}
+        check("the operator's own key was never used",
+              used == {"Bearer " + _StubProvider.ollama_key,
+                       "Bearer " + _StubProvider.jev_key}, used)
+    finally:
+        stub.shutdown()
+        p.terminate()
+        try:
+            p.wait(timeout=10)
+        except Exception:
+            p.kill()
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def main():
     proc = start()
     try:
@@ -328,6 +425,7 @@ def main():
     env_deployment()
     free_deployment()
     visitor_keys_deployment()
+    stub_flow_deployment()
 
     print("\n%d passed, %d failed" % (len(PASS), len(FAIL)))
     if FAIL:
