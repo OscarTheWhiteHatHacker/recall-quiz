@@ -87,8 +87,7 @@ def _load_env_file(path: Path) -> None:
             os.environ.setdefault(k, v.strip().strip('"').strip("'"))
 
 
-_load_env_file(Path.home() / ".hermes" / ".env")
-_load_env_file(ROOT / ".env")          # payment keys live here (see .env.example)
+_load_env_file(ROOT / ".env")          # keys live here (see .env.example)
 
 import billing                          # noqa: E402  (reads the env above at import)
 
@@ -98,15 +97,16 @@ def nvidia_key() -> str:
 
 
 def jev_key() -> str:
+    """The Jev grading key, if the operator supplied one. Empty = grade with the AI model."""
     key = os.environ.get("TYPESAFE_API_KEY", "").strip()
     if key:
         return key
-    for cand in (ROOT / ".jev_key", Path.home() / "projects" / "jev-snake" / ".jev_key"):
-        try:
-            if cand.exists():
-                return cand.read_text(encoding="utf-8").strip()
-        except OSError:
-            pass
+    f = ROOT / ".jev_key"                 # optional: drop the key in a file instead
+    try:
+        if f.exists():
+            return f.read_text(encoding="utf-8").strip()
+    except OSError:
+        pass
     return ""
 
 

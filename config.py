@@ -31,9 +31,9 @@ _LOCK = threading.RLock()
 # ---------------------------------------------------------------------------
 FIELDS = [
     # ---- AI -----------------------------------------------------------------
-    dict(group="Grading", key="TYPESAFE_API_KEY", label="Jev / TypeSafe API key",
-         hint="Marks the answers. Get one at api.typesafe.ai — required.",
-         secret=True, required=True),
+    dict(group="Grading", key="TYPESAFE_API_KEY", label="Jev / TypeSafe API key (optional)",
+         hint="Marks the answers. Get one at api.typesafe.ai. Leave blank and the generation "
+              "model marks them instead — no key, no cost, slightly less precise.", secret=True),
     dict(group="Grading", key="JEV_URL", label="Jev endpoint",
          default="https://api.typesafe.ai/v1/systemone"),
     dict(group="Generation", key="OLLAMA_API_KEY", label="Ollama Cloud API key",
@@ -174,10 +174,12 @@ def save(values: dict, touch_only: bool = True) -> None:
 
 
 def missing() -> list:
-    """Settings without which the app cannot work at all."""
+    """Settings without which the app cannot work at all.
+
+    Grading has two routes: Jev when TYPESAFE_API_KEY is set, otherwise the generation
+    model marks the answers as a fallback — so a generator key is the only hard requirement.
+    """
     out = []
-    if not get("TYPESAFE_API_KEY"):
-        out.append("TYPESAFE_API_KEY")
     if not (get("OLLAMA_API_KEY") or get("NVIDIA_API_KEY")):
         out.append("OLLAMA_API_KEY or NVIDIA_API_KEY")
     return out

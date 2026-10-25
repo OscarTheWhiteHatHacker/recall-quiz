@@ -120,9 +120,10 @@ def free_deployment():
     free_tmp = tempfile.mkdtemp(prefix="recall-free-")
     env = dict(os.environ)
     env.pop("PAYMENTS_ENABLED", None)
+    env.pop("TYPESAFE_API_KEY", None)          # no Jev: the model marks the answers
     env.update({"RECALL_CONFIG": os.path.join(free_tmp, "config.env"),
                 "BILLING_DB": os.path.join(free_tmp, "billing.db"), "PORT": str(PORT + 2),
-                "TYPESAFE_API_KEY": "free-jev", "OLLAMA_API_KEY": "free-ollama",
+                "OLLAMA_API_KEY": "free-ollama",
                 "PYTHONUNBUFFERED": "1"})
     p3 = subprocess.Popen([sys.executable, "-u", os.path.join(ROOT, "server.py")], cwd=ROOT,
                           env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
@@ -140,6 +141,8 @@ def free_deployment():
         else:
             raise RuntimeError("free-mode server did not come up")
         check("health says payments are off", h.get("payments_enabled") is False, h)
+        check("no Jev key is needed to be ready (model marks the answers)",
+              h.get("jev_key") is False and h.get("configured") is True, h)
         with urllib.request.urlopen(base3 + "/api/me", timeout=10) as resp:
             me = json.loads(resp.read().decode())
         check("/api/me reports a free instance", me.get("payments_enabled") is False
@@ -179,7 +182,8 @@ def main():
         s, h, _ = req("/api/health")
         check("health responds", s == 200 and h.get("ok") is True, s)
         check("reports not configured", h.get("configured") is False, h.get("configured"))
-        check("names the keys it needs", "TYPESAFE_API_KEY" in (h.get("missing") or []), h.get("missing"))
+        check("names the keys it needs", "OLLAMA_API_KEY or NVIDIA_API_KEY" in (h.get("missing") or []),
+              h.get("missing"))
         s, body, _ = req("/")
         check("root serves the setup wizard", s == 200 and "bring your own keys" in body, s)
         s, body, _ = req("/api/me")

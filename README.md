@@ -40,13 +40,12 @@ claim an instance you left running on the open internet.
 
 | Setting | Needed for | Where to get it |
 |---|---|---|
-| `TYPESAFE_API_KEY` | **Required.** Marks the answers | [api.typesafe.ai](https://api.typesafe.ai) → API keys |
-| `OLLAMA_API_KEY` | Writes the questions (fastest, free tier) | [ollama.com](https://ollama.com) → Settings → Keys |
+| `OLLAMA_API_KEY` | **Required.** Writes the questions (fastest, free tier) | [ollama.com](https://ollama.com) → Settings → Keys |
 | `NVIDIA_API_KEY` | Fallback generator, used if Ollama fails | [build.nvidia.com](https://build.nvidia.com) |
+| `TYPESAFE_API_KEY` | *Optional.* [Jev](https://api.typesafe.ai) marks the answers more precisely. Leave it out and the generation model marks them instead | [api.typesafe.ai](https://api.typesafe.ai) → API keys |
 
-One generator key is enough; two gives you automatic failover. Anything in the environment
-overrides the config file, so systemd `EnvironmentFile=` / `docker -e` / CI secrets all work
-and the wizard is purely a convenience.
+One generator key is enough; two gives you automatic failover. Nothing else is required —
+with no Jev key the app grades with the model you already have, at no extra cost.
 
 ## Going live on a domain
 
