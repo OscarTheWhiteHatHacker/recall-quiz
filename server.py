@@ -92,15 +92,36 @@ _load_env_file(ROOT / ".env")          # keys live here (see .env.example)
 import billing                          # noqa: E402  (reads the env above at import)
 
 
-def nvidia_key() -> str:
-    return os.environ.get("NVIDIA_API_KEY", "").strip()
+def keys_from_visitors() -> bool:
+    """True when every visitor supplies their own AI keys — the operator's are ignored."""
+    return _config.get("KEYS_FROM_VISITORS", "no").strip().lower() in ("yes", "1", "true", "on")
 
 
-def jev_key() -> str:
-    """The Jev grading key, if the operator supplied one. Empty = grade with the AI model."""
-    key = os.environ.get("TYPESAFE_API_KEY", "").strip()
+def _key_from(keys, name: str, env_name: str) -> str:
+    """The key for one provider: the visitor's when they sent one, else the operator's.
+
+    On a visitor-keys instance the operator's keys are deliberately never used, even if
+    they happen to be configured — that is the whole point of the mode.
+    """
+    given = str((keys or {}).get(name) or "").strip()
+    if given:
+        return given
+    if keys_from_visitors():
+        return ""
+    return os.environ.get(env_name, "").strip()
+
+
+def nvidia_key(keys=None) -> str:
+    return _key_from(keys, "nvidia", "NVIDIA_API_KEY")
+
+
+def jev_key(keys=None) -> str:
+    """The Jev grading key, if one was supplied. Empty = grade with the AI model."""
+    key = _key_from(keys, "typesafe", "TYPESAFE_API_KEY")
     if key:
         return key
+    if keys_from_visitors():
+        return ""                        # never reach for a key the visitor didn't bring
     f = ROOT / ".jev_key"                 # optional: drop the key in a file instead
     try:
         if f.exists():
@@ -185,21 +206,25 @@ def http_post(url: str, headers: dict, body: bytes, timeout: float, retries: int
 # --------------------------------------------------------------------------
 # AI helpers
 # --------------------------------------------------------------------------
-def ai_providers():
-    """Ordered (label, url, key, model) chain — first one that answers wins."""
+def ai_providers(keys=None):
+    """Ordered (label, url, key, model) chain — first one that answers wins.
+
+    `keys` are the keys supplied with the current request (visitor-keys instances).
+    """
     out = []
-    okey = os.environ.get("OLLAMA_API_KEY", "").strip()
+    okey = _key_from(keys, "ollama", "OLLAMA_API_KEY")
     if okey:
         out.append(("ollama/" + OLLAMA_MODEL, OLLAMA_URL, okey, OLLAMA_MODEL))
-    nkey = nvidia_key()
+    nkey = nvidia_key(keys)
     if nkey:
         out.append(("nvidia/" + GEN_MODEL, NVIDIA_URL, nkey, GEN_MODEL))
     return out
 
 
-def ai_chat(messages, *, max_tokens=512, temperature=0.4, json_mode=False, timeout=GEN_TIMEOUT):
+def ai_chat(messages, *, keys=None, max_tokens=512, temperature=0.4, json_mode=False,
+            timeout=GEN_TIMEOUT):
     """One chat call down the provider chain. Returns (content, provider_label)."""
-    providers = ai_providers()
+    providers = ai_providers(keys)
     if not providers:
         raise RuntimeError("no AI provider configured (OLLAMA_API_KEY / NVIDIA_API_KEY)")
     errors = []
@@ -293,11 +318,12 @@ Textbook excerpt:
 ---"""
 
 
-def generate_questions(text: str, count: int, mode: str):
+def generate_questions(text: str, count: int, mode: str, keys=None):
     """Returns (questions, provider_label) — keys stay server-side and are
     stripped before the payload ever reaches the browser."""
     reply, provider = ai_chat([{"role": "system", "content": GEN_SYSTEM},
                                {"role": "user", "content": build_prompt(text, count, mode)}],
+                              keys=keys,
                               max_tokens=2500, temperature=0.5, json_mode=True)
     raw = _extract_json(reply).get("questions", [])
     if not isinstance(raw, list) or not raw:
@@ -362,7 +388,7 @@ def _shuffle_indices(n: int, seed_text: str) -> int:
 # --------------------------------------------------------------------------
 # grading
 # --------------------------------------------------------------------------
-def jev_grade(q: dict, answer: str):
+def jev_grade(q: dict, answer: str, keys=None):
     """Jev's typed decision: correct | incorrect. Returns (verdict, confidence, usage)."""
     key_text = q["key_text"]
     state = {"question": q["q"], "answer_key": key_text,
@@ -385,7 +411,7 @@ def jev_grade(q: dict, answer: str):
             },
         }},
     }).encode()
-    headers = {"Authorization": "Bearer " + jev_key(), "Content-Type": "application/json",
+    headers = {"Authorization": "Bearer " + jev_key(keys), "Content-Type": "application/json",
                "Accept": "application/json", "Connection": "keep-alive"}
     status, data = http_post(JEV_URL, headers, body, JEV_TIMEOUT, retries=1)
     if status >= 400:
@@ -396,7 +422,7 @@ def jev_grade(q: dict, answer: str):
     return ans.get("choice"), float(ans.get("confidence") or 0), usage
 
 
-def ai_explain(q: dict, answer: str, excerpt: str) -> str:
+def ai_explain(q: dict, answer: str, excerpt: str, keys=None) -> str:
     """Why the student's wrong answer is wrong — 1-3 sentences, tutor voice."""
     prompt = (f"Question: {q['q']}\n"
               f"Correct answer: {q['key_text']}\n"
@@ -405,7 +431,7 @@ def ai_explain(q: dict, answer: str, excerpt: str) -> str:
               "In 1-3 direct sentences, explain why the student's answer is wrong and "
               "state the correct idea. No preamble, no restating the question.")
     try:
-        out, _ = ai_chat([{"role": "user", "content": prompt}],
+        out, _ = ai_chat([{"role": "user", "content": prompt}], keys=keys,
                          max_tokens=220, temperature=0.3, timeout=90)
         out = out.strip().strip('"')
         return out if out else "The correct answer is: %s" % q["key_text"]
@@ -413,14 +439,14 @@ def ai_explain(q: dict, answer: str, excerpt: str) -> str:
         return "The correct answer is: %s" % q["key_text"]
 
 
-def ai_grade_fallback(q: dict, answer: str, excerpt: str):
+def ai_grade_fallback(q: dict, answer: str, excerpt: str, keys=None):
     """Used only when Jev is unreachable: one call that both grades and explains."""
     prompt = (f"Question: {q['q']}\nCorrect answer: {q['key_text']}\n"
               f"Student answered: {answer}\nTextbook excerpt: {excerpt[:900]}\n\n"
               'Judge the student answer. Reply with JSON only: '
               '{"correct": true|false, "explanation": "1-3 sentences saying why it is '
               'WRONG (empty string if correct)"}')
-    reply, _ = ai_chat([{"role": "user", "content": prompt}],
+    reply, _ = ai_chat([{"role": "user", "content": prompt}], keys=keys,
                        max_tokens=300, temperature=0.3, json_mode=True, timeout=90)
     obj = _extract_json(reply)
     return bool(obj.get("correct")), str(obj.get("explanation") or "").strip()
@@ -451,7 +477,7 @@ def public_question(q: dict) -> dict:
     return base
 
 
-def grade_one(sess: dict, q: dict, answer: str) -> dict:
+def grade_one(sess: dict, q: dict, answer: str, keys=None) -> dict:
     answer = (answer or "").strip()
     key_text = q["key_text"]
     if not answer:
@@ -459,7 +485,7 @@ def grade_one(sess: dict, q: dict, answer: str) -> dict:
                 "explanation": "You didn't answer. The correct answer is: %s" % key_text,
                 "student": "", "correct_answer": key_text}
     try:
-        verdict, conf, usage = jev_grade(q, answer)
+        verdict, conf, usage = jev_grade(q, answer, keys)
         grader = "jev"
         if verdict not in ("correct", "incorrect"):
             raise ValueError("unexpected verdict %r" % verdict)
@@ -468,7 +494,7 @@ def grade_one(sess: dict, q: dict, answer: str) -> dict:
         verdict, conf = ("incorrect", 0.5)
         grader = "ai-fallback"
         try:
-            ok, expl = ai_grade_fallback(q, answer, sess["text"])
+            ok, expl = ai_grade_fallback(q, answer, sess["text"], keys)
             verdict = "correct" if ok else "incorrect"
             return {"id": q["id"], "correct": True if ok else False, "confidence": conf,
                     "grader": grader, "explanation": expl, "student": answer,
@@ -550,6 +576,33 @@ class Handler(SimpleHTTPRequestHandler):
         raw = self.rfile.read(length) if length else b"{}"
         return json.loads(raw.decode("utf-8", "replace"))
 
+    # ---- keys the visitor brings -------------------------------------------
+    KEY_FIELDS = ("ollama", "nvidia", "typesafe")
+
+    def _visitor_keys(self, body) -> dict:
+        """Keys sent with this request.
+
+        They are used for this call and then dropped — nothing is written to disk, to the
+        ledger or to a session, so an instance can serve visitors without holding anyone's
+        credentials (or the operator's).
+        """
+        raw = body.get("keys") if isinstance(body, dict) else None
+        if not isinstance(raw, dict):
+            return {}
+        out = {}
+        for name in self.KEY_FIELDS:
+            value = str(raw.get(name) or "").strip()
+            if value:
+                out[name] = value[:200]
+        return out
+
+    def _keys_missing(self, keys):
+        """The response to send when a visitor-keys instance got no usable key, else None."""
+        if keys_from_visitors() and not (keys.get("ollama") or keys.get("nvidia")):
+            return self._send(400, {"error": "Add your own AI API keys to use this site.",
+                                    "need_keys": True, "keys_from_visitors": True})
+        return None
+
     # ---- first-run setup -------------------------------------------------
     def _is_local(self):
         """True only for a genuine loopback caller.
@@ -610,6 +663,8 @@ class Handler(SimpleHTTPRequestHandler):
         if path == "/api/health":
             return self._send(200, {"ok": True,
                                     "providers": [p[0] for p in ai_providers()],
+                                    "keys_from_visitors": keys_from_visitors(),
+                                    "keys_needed": keys_from_visitors(),
                                     "nvidia_key": bool(nvidia_key()),
                                     "jev_key": bool(jev_key()),
                                     "payments_enabled": billing.PAYMENTS_ENABLED,
@@ -674,13 +729,15 @@ class Handler(SimpleHTTPRequestHandler):
     def _me(self):
         if not billing.PAYMENTS_ENABLED:
             # free mode: nothing to buy, nothing to charge — no account is created
-            return self._send(200, {"payments_enabled": False, "free": True})
+            return self._send(200, {"payments_enabled": False, "free": True,
+                                    "keys_from_visitors": keys_from_visitors()})
         token, is_new = self._account()
         s = billing.account_summary(token)
         body = dict(s)
         body.update(billing.price_table())
         body["topup_step_cents"] = billing.TOPUP_CENTS
         body["payments_enabled"] = True
+        body["keys_from_visitors"] = keys_from_visitors()
         return self._send(200, body, set_cookie=self._cookie(token) if is_new else None)
 
     def _checkout(self):
@@ -857,6 +914,10 @@ class Handler(SimpleHTTPRequestHandler):
 
     def _generate(self):
         body = self._body()
+        keys = self._visitor_keys(body)
+        missing = self._keys_missing(keys)
+        if missing:
+            return missing
         text = str(body.get("text") or "").strip()
         if len(text) < 120:
             raise ValueError("Paste at least a paragraph (120 characters) of material.")
@@ -889,7 +950,7 @@ class Handler(SimpleHTTPRequestHandler):
                                         "prices": billing.price_table()},
                                   set_cookie=set_cookie)
 
-        questions, provider = generate_questions(text, count, mode)
+        questions, provider = generate_questions(text, count, mode, keys)
         left = 0
         if billing.PAYMENTS_ENABLED:
             paid, price, left = billing.charge(token, count)
@@ -912,6 +973,10 @@ class Handler(SimpleHTTPRequestHandler):
 
     def _grade(self):
         body = self._body()
+        keys = self._visitor_keys(body)
+        missing = self._keys_missing(keys)
+        if missing:
+            return missing
         sid = str(body.get("sid") or "")
         answers = body.get("answers") or {}
         with S_LOCK:
@@ -937,7 +1002,7 @@ class Handler(SimpleHTTPRequestHandler):
         with ThreadPoolExecutor(max_workers=min(8, len(sess["questions"]))) as pool:
             for q in sess["questions"]:
                 ans = str(answers.get(q["id"]) or "")[:MAX_ANSWER]
-                jobs.append((q, pool.submit(grade_one, sess, q, ans)))
+                jobs.append((q, pool.submit(grade_one, sess, q, ans, keys)))
             results = [fut.result() for _, fut in jobs]
 
         # keep server order
@@ -956,6 +1021,10 @@ class Handler(SimpleHTTPRequestHandler):
         """Lazy 'why it's wrong' text: grading returns in ~1s, the explanations
         are fetched per question afterwards so the results screen is instant."""
         body = self._body()
+        keys = self._visitor_keys(body)
+        missing = self._keys_missing(keys)
+        if missing:
+            return missing
         sid = str(body.get("sid") or "")
         qid = str(body.get("qid") or "")
         with S_LOCK:
@@ -975,7 +1044,7 @@ class Handler(SimpleHTTPRequestHandler):
             if hit is None:
                 answer = str(sess.get("answers", {}).get(qid) or "").strip()
                 hit = ("You didn't answer. The correct answer is: " + q["key_text"]) if not answer \
-                    else ai_explain(q, answer, sess["text"])
+                    else ai_explain(q, answer, sess["text"], keys)
                 cache[qid] = hit
         return self._send(200, {"qid": qid, "explanation": hit})
 
@@ -993,9 +1062,12 @@ def main():
         print("  Wrote nothing? Settings live in %s" % _config.CONFIG_PATH)
         print("")
     else:
-        if not jev_key():
+        if not keys_from_visitors() and not jev_key():
             sys.stderr.write("[recall] WARNING: no Jev key — grading falls back to the AI model\n")
-    chain = ", ".join(p[0] for p in ai_providers()) or "none"
+    if keys_from_visitors():
+        chain = "visitor-supplied keys"
+    else:
+        chain = ", ".join(p[0] for p in ai_providers()) or "none"
     pay = billing.provider()
     if billing.PAYMENTS_ENABLED:
         print("Recall -> http://%s:%d/   (gen=%s, judge=jev-latest, pay=%s, %s per 5q, %s%s top-ups)"

@@ -175,6 +175,69 @@ def _status(url, data=None):
         return e.code
 
 
+def _post_at(base, path, payload):
+    """POST JSON to any local base and return (status, parsed_body)."""
+    r = urllib.request.Request(base + path, data=json.dumps(payload).encode(),
+                               headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(r, timeout=120) as resp:
+            return resp.status, json.loads(resp.read().decode())
+    except urllib.error.HTTPError as e:
+        raw = e.read().decode()
+        try:
+            return e.code, json.loads(raw)
+        except ValueError:
+            return e.code, {"raw": raw[:200]}
+
+
+def visitor_keys_deployment():
+    """A public instance that holds no keys at all: visitors paste their own."""
+    print("\n9. keys from visitors — the instance holds none")
+    tmp = tempfile.mkdtemp(prefix="recall-byok-")
+    config = os.path.join(tmp, "config.env")
+    env = dict(os.environ)
+    env.pop("TYPESAFE_API_KEY", None)
+    env.update({"RECALL_CONFIG": config, "BILLING_DB": os.path.join(tmp, "billing.db"),
+                "PORT": str(PORT + 3), "KEYS_FROM_VISITORS": "yes",
+                "OLLAMA_API_KEY": "operator-key-must-be-ignored",
+                "PYTHONUNBUFFERED": "1"})
+    p = subprocess.Popen([sys.executable, "-u", os.path.join(ROOT, "server.py")], cwd=ROOT,
+                         env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    base = "http://127.0.0.1:%d" % (PORT + 3)
+    try:
+        for _ in range(60):
+            time.sleep(0.25)
+            try:
+                with urllib.request.urlopen(base + "/api/health", timeout=2) as resp:
+                    h = json.loads(resp.read().decode())
+                break
+            except Exception:
+                if p.poll() is not None:
+                    raise RuntimeError("visitor-keys server exited")
+        else:
+            raise RuntimeError("visitor-keys server did not come up")
+        check("health says keys come from visitors", h.get("keys_from_visitors") is True, h)
+        check("the operator's own keys are ignored",
+              h.get("providers") == [] and h.get("nvidia_key") is False, h)
+        check("no key is needed for the instance to be ready", h.get("configured") is True, h)
+        s, body = _post_at(base, "/api/generate", {"text": "x" * 200, "count": 3})
+        check("generating without keys asks for them",
+              s == 400 and body.get("need_keys") is True, (s, body))
+        s, body = _post_at(base, "/api/generate",
+                           {"text": "x" * 200, "count": 3, "keys": {"ollama": "visitor-key"}})
+        check("a visitor's key opens the gate (the provider is actually called)",
+              not (s == 400 and body.get("need_keys")), (s, str(body)[:120]))
+        check("nothing was written to disk (keys are never stored)",
+              not os.path.exists(config) and not os.path.exists(os.path.join(tmp, "billing.db")))
+    finally:
+        p.terminate()
+        try:
+            p.wait(timeout=10)
+        except Exception:
+            p.kill()
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def main():
     proc = start()
     try:
@@ -263,6 +326,7 @@ def main():
 
     env_deployment()
     free_deployment()
+    visitor_keys_deployment()
 
     print("\n%d passed, %d failed" % (len(PASS), len(FAIL)))
     if FAIL:

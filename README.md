@@ -47,6 +47,18 @@ claim an instance you left running on the open internet.
 One generator key is enough; two gives you automatic failover. Nothing else is required —
 with no Jev key the app grades with the model you already have, at no extra cost.
 
+## Letting visitors bring their own keys
+
+Set `KEYS_FROM_VISITORS=yes` and the instance holds **no** keys at all: the app shows a
+*Your API keys* panel, parks the keys in the visitor's browser (`localStorage`), and sends
+them with each `/api/generate`, `/api/grade` and `/api/explain` call. They are used for that
+call and dropped — never written to the config file, the ledger or a session — and your own
+keys are ignored even if you configured some. Good for a public demo you don't want to pay
+for; the trade-off is that every visitor needs an Ollama or NVIDIA key before they can start.
+
+`GET /api/health` reports `keys_from_visitors` and `providers: []` in this mode, and a
+request without keys gets `400 {"need_keys": true}` instead of a quiz.
+
 ## Going live on a domain
 
 The app runs happily on `http://localhost:3460`. To take payments you need a public HTTPS
@@ -116,6 +128,7 @@ see `.env.example` for the full list with defaults. The interesting ones:
 
 | Setting | Default | Meaning |
 |---|---|---|
+| `KEYS_FROM_VISITORS` | `no` | `yes` = visitors supply their own AI keys; the instance's are ignored |
 | `PAYMENTS_ENABLED` | `no` | `no` = free instance (no balance/checkout). `yes` = charge per quiz |
 | `PRICE_PER_5_CENTS` | `1` | minor units per 5 questions (1 = 1¢) |
 | `TOPUP_CENTS` | `100` | top-up step ($1.00) |
@@ -136,7 +149,7 @@ GET  /                     the app (setup wizard until configured)
 GET  /setup                first-run wizard   (localhost, or ?token=<SETUP_TOKEN>)
 GET  /api/setup            field list + which secrets are set (never their values)
 POST /api/setup            save settings
-GET  /api/health           which providers/keys are live
+GET  /api/health           which providers/keys are live (and who supplies the keys)
 GET  /api/me               balance, prices, payment state
 POST /api/generate         {text, count} -> questions (answer key withheld)
 POST /api/grade            {sid, answers} -> scored, per-question verdicts

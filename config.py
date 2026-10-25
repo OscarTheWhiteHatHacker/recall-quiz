@@ -48,6 +48,11 @@ FIELDS = [
     dict(group="Generation", key="GEN_MODEL", label="NVIDIA model", default="z-ai/glm-5.3-flash"),
     dict(group="Generation", key="NVIDIA_URL", label="NVIDIA endpoint",
          default="https://integrate.api.nvidia.com/v1/chat/completions"),
+    dict(group="AI access", key="KEYS_FROM_VISITORS", label="Keys come from visitors",
+         default="no", choices=["no", "yes"],
+         hint="yes = every visitor pastes their own AI keys in the browser (never stored "
+              "on the server) — run a public instance without your own keys or bill. "
+              "no = this instance's own keys are used for everyone."),
     # ---- payments -----------------------------------------------------------
     dict(group="Payments", key="PAYMENTS_ENABLED", label="Take payments", default="no",
          choices=["no", "yes"],
@@ -178,7 +183,10 @@ def missing() -> list:
 
     Grading has two routes: Jev when TYPESAFE_API_KEY is set, otherwise the generation
     model marks the answers as a fallback — so a generator key is the only hard requirement.
+    A visitor-keys instance needs nothing: every caller brings their own keys.
     """
+    if get("KEYS_FROM_VISITORS", "no").strip().lower() in ("yes", "1", "true", "on"):
+        return []
     out = []
     if not (get("OLLAMA_API_KEY") or get("NVIDIA_API_KEY")):
         out.append("OLLAMA_API_KEY or NVIDIA_API_KEY")

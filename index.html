@@ -252,6 +252,8 @@ textarea#ans:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(123,123,
     <div class="brand">Recall<small>paste → quiz → graded by Jev</small></div>
     <button class="balance" id="credit" type="button" title="Add credit">
       <span id="bal">…</span><span class="plus">+</span></button>
+    <button class="balance" id="keysBtn" type="button" title="Your API keys"
+            style="display:none">🔑 <span id="keysState">add keys</span></button>
   </header>
 
   <!-- 1. PASTE -->
@@ -350,6 +352,29 @@ textarea#ans:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(123,123,
 </div>
 <div id="toast"></div>
 
+<!-- visitor API keys sheet -->
+<div id="keys" class="sheetwrap">
+  <div class="sheet">
+    <div class="sheetgrip"></div>
+    <h3>Your API keys</h3>
+    <p class="paymsg">Recall runs on your own AI keys. They are saved in
+      <b>this browser only</b> — never sent anywhere except the AI provider, and never stored
+      on this server. Get a free Ollama key at ollama.com → Settings → Keys.</p>
+    <label class="klbl" for="kOllama">Ollama Cloud key <span class="req">required</span></label>
+    <input id="kOllama" type="password" autocomplete="off" spellcheck="false"
+           placeholder="writes the questions (free tier)">
+    <label class="klbl" for="kNvidia">NVIDIA key <span class="opt">optional fallback</span></label>
+    <input id="kNvidia" type="password" autocomplete="off" spellcheck="false"
+           placeholder="build.nvidia.com — used if Ollama is down">
+    <label class="klbl" for="kTypesafe">Jev / TypeSafe key <span class="opt">optional</span></label>
+    <input id="kTypesafe" type="password" autocomplete="off" spellcheck="false"
+           placeholder="api.typesafe.ai — sharper marking">
+    <button class="btn" id="kSave" type="button">Save keys</button>
+    <button class="linkbtn" id="kClear" type="button">Forget saved keys</button>
+    <button class="btn ghost" id="kClose" type="button">Close</button>
+  </div>
+</div>
+
 <script>
 'use strict';
 const $ = s => document.querySelector(s);
@@ -435,18 +460,65 @@ function fmtCents(c){
 }
 function quizPrice(n){ return Math.ceil((n || 5) / 5) * ((ME && ME.per_5_questions) || 1); }
 
+/* ---------- keys the visitor brings (stored in this browser only) ---------- */
+let KEYS = (()=>{ try{ return JSON.parse(localStorage.getItem('recall_keys') || '{}') || {}; }
+                  catch(e){ return {}; } })();
+function haveKeys(){ return !!(KEYS.ollama || KEYS.nvidia); }
+function keysBody(){ return haveKeys() ? {keys: KEYS} : {}; }
+function openKeys(){
+  $('#kOllama').value = KEYS.ollama || '';
+  $('#kNvidia').value = KEYS.nvidia || '';
+  $('#kTypesafe').value = KEYS.typesafe || '';
+  $('#keys').classList.add('on');
+}
+function closeKeys(){ $('#keys').classList.remove('on'); }
+function saveKeys(){
+  const next = {};
+  const o = $('#kOllama').value.trim(), n = $('#kNvidia').value.trim(),
+        t = $('#kTypesafe').value.trim();
+  if(o) next.ollama = o;
+  if(n) next.nvidia = n;
+  if(t) next.typesafe = t;
+  KEYS = next;
+  try{ localStorage.setItem('recall_keys', JSON.stringify(KEYS)); }catch(e){}
+  closeKeys(); paintMe();
+  toast(haveKeys() ? 'Keys saved in this browser.' :
+        'Saved — an Ollama or NVIDIA key is needed to generate.');
+}
+$('#keysBtn').addEventListener('click', openKeys);
+$('#kSave').addEventListener('click', saveKeys);
+$('#kClose').addEventListener('click', closeKeys);
+$('#keys').addEventListener('click', e => { if(e.target.id === 'keys') closeKeys(); });
+$('#kClear').addEventListener('click', ()=>{
+  KEYS = {};
+  try{ localStorage.removeItem('recall_keys'); }catch(e){}
+  $('#kOllama').value = $('#kNvidia').value = $('#kTypesafe').value = '';
+  closeKeys(); paintMe(); toast('Saved keys forgotten.');
+});
+
 function paintMe(){
   if(!ME) return;
   if(ME.payments_enabled === false){
     // free instance: no balance, no prices, no paywall — just generate
     $('#credit').style.display = 'none';
-    $('#priceLine').textContent = 'Free — unlimited quizzes, nothing to pay';
-    const canGo = src.value.trim().length >= 120;
-    $('#go').textContent = 'Generate my quiz';
-    $('#go').disabled = !canGo;
-    $('#ctaHint').textContent = canGo ? 'No account, no card — completely free.' : '';
+    const visitorKeys = ME.keys_from_visitors === true;
+    const have = haveKeys();
+    $('#keysBtn').style.display = visitorKeys ? '' : 'none';
+    if(visitorKeys) $('#keysState').textContent = have ? 'your keys' : 'add keys';
+    $('#priceLine').textContent = visitorKeys
+      ? (have ? 'Free — unlimited quizzes, running on your own keys'
+              : 'Free — bring your own AI keys (saved in this browser)')
+      : 'Free — unlimited quizzes, nothing to pay';
+    const ready = src.value.trim().length >= 120;
+    const blocked = visitorKeys && !have;
+    $('#go').textContent = blocked ? 'Add your API keys' : 'Generate my quiz';
+    $('#go').disabled = blocked ? false : !ready;   // blocked -> opens the keys sheet
+    $('#ctaHint').textContent = blocked
+      ? 'You supply the AI keys — they never leave your browser.'
+      : (ready ? 'No account, no card — completely free.' : '');
     return;
   }
+  $('#keysBtn').style.display = 'none';
   const b = ME.balance_cents, p = quizPrice(S.count);
   $('#bal').textContent = fmtCents(b);
   $('#credit').classList.toggle('low', b < p);
@@ -546,6 +618,7 @@ $('#modeSeg').addEventListener('click', e=>{
 
 $('#go').addEventListener('click', async ()=>{
   const text = src.value.trim();
+  if(ME && ME.keys_from_visitors === true && !haveKeys()){ openKeys(); return; }
   if(text.length < 120){ toast('Paste at least a paragraph to work from.'); return; }
   const btn = $('#go'); btn.disabled = true;
   const t0 = Date.now();
@@ -557,7 +630,7 @@ $('#go').addEventListener('click', async ()=>{
     'Shuffling the multiple-choice options…'
   ], ()=> 'elapsed ' + Math.round((Date.now()-t0)/1000) + 's');
   try{
-    const d = await api('/api/generate', {text, count:S.count, mode:S.mode}, 200000);
+    const d = await api('/api/generate', {text, count:S.count, mode:S.mode, ...keysBody()}, 200000);
     S.sid = d.sid; S.qs = d.questions; S.ans = {}; S.idx = 0; S.res = null; S.gen = text;
     S.model = '';
     if(typeof d.balance_cents === 'number' && ME){ ME.balance_cents = d.balance_cents; }
@@ -569,7 +642,10 @@ $('#go').addEventListener('click', async ()=>{
     if(d.truncated) toast('Text was long — used the first 40,000 characters.');
   }catch(err){
     overlay(false);
-    if(ME && ME.payments_enabled !== false && err && err.message && /credit/i.test(err.message)){
+    if(err && err.body && err.body.need_keys){
+      openKeys();
+      toast('Add your API keys first — they stay in this browser.');
+    }else if(ME && ME.payments_enabled !== false && err && err.message && /credit/i.test(err.message)){
       if(ME && typeof err.needCents === 'number'){
         ME.balance_cents = err.balanceCents;
         paintMe();
@@ -688,7 +764,7 @@ async function submit(){
     'Comparing against the hidden key…'
   ], ()=> 'elapsed ' + Math.round((Date.now()-t0)/1000) + 's');
   try{
-    const d = await api('/api/grade', {sid:S.sid, answers:S.ans}, 240000);
+    const d = await api('/api/grade', {sid:S.sid, answers:S.ans, ...keysBody()}, 240000);
     S.res = d; save();
     overlay(false);
     renderResults();
@@ -788,7 +864,7 @@ function fetchExplanations(){
     const qid = btn.dataset.q;
     const run = async ()=>{
       try{
-        const d = await api('/api/explain', {sid:S.sid, qid}, 200000);
+        const d = await api('/api/explain', {sid:S.sid, qid, ...keysBody()}, 200000);
         if(d.explanation){
           why.classList.remove('loading');
           why.innerHTML = '';
@@ -832,6 +908,17 @@ loadMe().then(checkReturn);
 .slideInL{animation:slideInL .32s cubic-bezier(.22,.9,.3,1) both}
 .slideOutL{animation:slideOutL .3s cubic-bezier(.4,0,.7,.4) both}
 .slideOutR{animation:slideOutR .3s cubic-bezier(.4,0,.7,.4) both}
+/* keys sheet */
+#keys .sheet h3{margin:2px 0 8px}
+#keys .sheet{padding-bottom:calc(18px + var(--safe))}
+.klbl{display:block;font-size:12.5px;font-weight:700;color:var(--muted);margin:10px 0 4px}
+.klbl .req{color:var(--accent);font-weight:800}
+.klbl .opt{color:var(--muted);font-weight:500}
+#keys input{width:100%;padding:12px 13px;border:1px solid var(--line);border-radius:12px;
+  background:var(--surface2);font-size:14.5px}
+#keys .btn{margin-top:16px}
+#keys .linkbtn{margin:10px auto 0}
+#keys .btn.ghost{margin-top:8px}
 </style>
 </body>
 </html>
