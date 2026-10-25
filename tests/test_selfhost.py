@@ -226,7 +226,8 @@ def visitor_keys_deployment():
         s, body = _post_at(base, "/api/generate",
                            {"text": "x" * 200, "count": 3, "keys": {"ollama": "visitor-key"}})
         check("a visitor's key opens the gate (the provider is actually called)",
-              not (s == 400 and body.get("need_keys")), (s, str(body)[:120]))
+              s == 400 and body.get("provider_error") is True
+              and "rejected" in str(body.get("error")), (s, str(body)[:160]))
         check("nothing was written to disk (keys are never stored)",
               not os.path.exists(config) and not os.path.exists(os.path.join(tmp, "billing.db")))
     finally:

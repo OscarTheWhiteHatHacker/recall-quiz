@@ -645,6 +645,8 @@ $('#go').addEventListener('click', async ()=>{
     if(err && err.body && err.body.need_keys){
       openKeys();
       toast('Add your API keys first — they stay in this browser.');
+    }else if(err && err.body && err.body.provider_error){
+      toast(err.message);
     }else if(ME && ME.payments_enabled !== false && err && err.message && /credit/i.test(err.message)){
       if(ME && typeof err.needCents === 'number'){
         ME.balance_cents = err.balanceCents;

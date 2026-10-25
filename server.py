@@ -221,13 +221,32 @@ def ai_providers(keys=None):
     return out
 
 
+class ProviderError(RuntimeError):
+    """The AI provider refused or failed the call.
+
+    Surfaced to the browser as a 400, not a 502: Cloudflare replaces an origin 5xx body with
+    its own error page, which would hide the actual reason (a rejected key, say) from the
+    visitor who has to fix it.
+    """
+
+
+_HINTS = {
+    401: "That AI key was rejected (401). Check it and try again.",
+    402: "That AI key is out of credit (402).",
+    403: "That AI key isn't allowed to use this model (403).",
+    404: "The model name wasn't recognised (404).",
+    429: "That AI key is rate-limited (429) — wait a minute and try again.",
+}
+
+
 def ai_chat(messages, *, keys=None, max_tokens=512, temperature=0.4, json_mode=False,
             timeout=GEN_TIMEOUT):
     """One chat call down the provider chain. Returns (content, provider_label)."""
     providers = ai_providers(keys)
     if not providers:
-        raise RuntimeError("no AI provider configured (OLLAMA_API_KEY / NVIDIA_API_KEY)")
+        raise ProviderError("No AI keys yet — add an Ollama or NVIDIA key.")
     errors = []
+    statuses = []
     for label, url, key, model in providers:
         payload = {"model": model, "messages": messages,
                    "max_tokens": max_tokens, "temperature": temperature}
@@ -242,6 +261,7 @@ def ai_chat(messages, *, keys=None, max_tokens=512, temperature=0.4, json_mode=F
                 payload.pop("response_format", None)
                 status, data = http_post(url, headers, json.dumps(payload).encode(), timeout, retries=1)
             if status >= 400:
+                statuses.append(status)
                 raise RuntimeError("HTTP %d: %s" % (status, data[:160].decode("utf-8", "replace")))
             obj = json.loads(data.decode("utf-8", "replace"))
             content = obj["choices"][0]["message"]["content"]
@@ -251,7 +271,8 @@ def ai_chat(messages, *, keys=None, max_tokens=512, temperature=0.4, json_mode=F
         except Exception as exc:
             errors.append("%s -> %s" % (label, exc))
             sys.stderr.write("[ai] %s failed: %s\n" % (label, exc))
-    raise RuntimeError("all AI providers failed: " + " | ".join(errors))
+    hint = next((_HINTS[s] for s in statuses if s in _HINTS), "The AI provider could not be reached.")
+    raise ProviderError(hint + "  (" + " | ".join(errors)[:240] + ")")
 
 
 def _extract_json(text: str):
@@ -719,6 +740,11 @@ class Handler(SimpleHTTPRequestHandler):
             if path.startswith("/api/webhook/"):
                 return self._webhook(path.rsplit("/", 1)[-1])
             return self._send(404, {"error": "not found"})
+        except ProviderError as exc:
+            # 400, not 502: Cloudflare hides an origin 5xx body behind its own error page,
+            # and the visitor needs to read why their key didn't work.
+            sys.stderr.write("[error] %s: %s\n" % (path, exc))
+            return self._send(400, {"error": str(exc)[:300], "provider_error": True})
         except ValueError as exc:
             return self._send(400, {"error": str(exc)})
         except Exception as exc:
